@@ -1,0 +1,43 @@
+name: macOS Build & Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (macOS)
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain versions
+        run: |
+          uname -m
+          sw_vers
+          swift --version
+          xcodebuild -version
+
+      - name: Resolve Swift package dependencies
+        working-directory: Goose
+        run: swift package resolve
+
+      - name: Build Release (ARM64)
+        working-directory: Goose
+        run: swift build -c release --arch arm64
+
+      - name: Run SwiftPM unit tests
+        working-directory: Goose
+        run: swift test
+
+      - name: Validate built binary (headless smoke checks)
+        working-directory: Goose
+        run: |
+          BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
+          "$BIN_DIR/Goose" --diagnose-permissions
+          "$BIN_DIR/Goose" --brain-dryrun
+          file "$BIN_DIR/Goose"

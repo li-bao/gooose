@@ -1,0 +1,35 @@
+# macOS & Xcode
+.DS_Store
+*.xcuserstate
+*.dSYM/
+*.xcarchive/
+DerivedData/
+build/
+
+# Swift / SPM
+.build/
+Goose/.build/
+Goose/.swiftpm/
+Goose/Package.resolved
+
+# Distribution artifacts (use GitHub Releases for binaries)
+dist/
+dist/*.dmg
+dist/*.app
+
+# Secrets & local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
+openai-key
+
+# Logs & temporary files
+*.log
+/tmp/
+
+# Unlicensed sprite assets (populated locally at build/setup time)
+Goose/Sources/Goose/Resources/Sprites/Goose/**/*.png
+!Goose/Sources/Goose/Resources/Sprites/Goose/.gitkeep
