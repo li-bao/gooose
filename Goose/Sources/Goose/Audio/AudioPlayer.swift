@@ -12,10 +12,8 @@ enum HonkEvent: Sendable {
     case pat
 }
 
-/// Plays goose sound effects from a user-provided Desktop Goose installation.
-/// Audio files are never bundled in this project — they live in the user's
-/// legitimately installed `Desktop Goose.app/Contents/Resources/`.
-/// Configure the path via the `GOOSE_AUDIO_PATH` environment variable.
+/// Event-driven audio facade that plays user-provided audio when available and
+/// delegates synthesized duck, goose, and movement sounds to `SoundEffectEngine`.
 @MainActor
 final class AudioPlayer {
     static let defaultInstallPath = "/Users/kruta/testes/desktop-goose-source/Desktop Goose v0.22/Desktop Goose.app/Contents/Resources"
@@ -31,57 +29,90 @@ final class AudioPlayer {
         let bundlePath = Bundle.main.resourcePath
         self.installRoot = installRoot ?? envPath ?? bundlePath ?? Self.defaultInstallPath
         load()
+        didLoadAnything = true // Synthesized engine is always available locally
     }
 
-    /// Plays an event-tailored sound effect with distinct volume and pitch rate.
+    /// Plays an event-tailored sound effect matching the goose/duck's mood.
     func playEvent(_ event: HonkEvent) {
+        let s = GooseSettings.shared
+        guard s.masterSoundEnabled, !s.muteGoose else { return }
+
         switch event {
         case .pat:
-            playPat()
+            if !pats.isEmpty && s.soundEffects {
+                playPat()
+            } else {
+                _ = SoundEffectEngine.shared.playDuck(.happyQuack, priority: .normal)
+            }
         case .random:
-            playHonk(volume: 0.75, rate: Float.random(in: 0.95...1.05))
+            if s.duckSoundsEnabled && (!s.gooseSoundsEnabled || Bool.random()) {
+                let duckPicks: [DuckSound] = [.shortQuack, .longQuack, .happyQuack, .quietMutter, .repeatedQuacking]
+                _ = SoundEffectEngine.shared.playDuck(duckPicks.randomElement() ?? .shortQuack, priority: .normal)
+            } else {
+                playHonk(volume: 0.75, rate: Float.random(in: 0.95...1.05))
+            }
         case .appSwitch:
-            playHonk(volume: 0.65, rate: 1.08)
+            if s.duckSoundsEnabled && Bool.random() {
+                _ = SoundEffectEngine.shared.playDuck(.surprisedQuack, priority: .normal)
+            } else {
+                playHonk(volume: 0.65, rate: 1.08)
+            }
         case .theft:
-            playHonk(volume: 0.9, rate: 1.15)
+            if !SoundEffectEngine.shared.playGoose(.excitedHonk, priority: .high) {
+                _ = SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
+            }
         case .rage, .sleepWake:
-            playHonk(volume: 1.0, rate: 1.22)
+            if !SoundEffectEngine.shared.playGoose(.aggressiveHonk, priority: .high) {
+                _ = SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
+            }
         case .peek:
-            playHonk(volume: 0.45, rate: 0.90)
+            _ = SoundEffectEngine.shared.playDuck(.quietMutter, priority: .low)
         case .prank:
-            playHonk(volume: 0.8, rate: 1.0)
+            if Bool.random() {
+                _ = SoundEffectEngine.shared.playGoose(.warningHonk, priority: .normal)
+            } else {
+                _ = SoundEffectEngine.shared.playDuck(.shortQuack, priority: .normal)
+            }
         }
     }
 
-    /// Honk volume is relative: the call-site default (0.8) maps to the
-    /// user's Honk Volume slider.
     func playHonk(volume: Float = 0.8, rate: Float = 1.0) {
         let s = GooseSettings.shared
-        guard s.allows(.honking), !s.muteGoose else { return }
-        let level = Float(s.masterVolume * s.honkVolume) * (volume / 0.8)
-        playRandom(from: honks, volume: min(1, level), rate: rate)
+        guard s.masterSoundEnabled, !s.muteGoose, s.gooseSoundsEnabled, s.allows(.honking) else { return }
+        if !honks.isEmpty {
+            let level = Float(s.masterVolume * s.honkVolume) * (volume / 0.8)
+            playRandom(from: honks, volume: min(1, level), rate: rate)
+        } else if !SoundEffectEngine.shared.playCustomUserSoundIfAvailable(category: .goose) {
+            _ = SoundEffectEngine.shared.playGoose(.classicHonk, priority: .normal)
+        }
     }
 
     func playPat(volume: Float = 0.4) {
         let s = GooseSettings.shared
-        guard s.soundEffects, !s.muteGoose else { return }
-        playRandom(from: pats, volume: min(1, volume * Float(s.masterVolume)), rate: 1.0)
+        guard s.masterSoundEnabled, s.soundEffects, !s.muteGoose else { return }
+        if !pats.isEmpty {
+            playRandom(from: pats, volume: min(1, volume * Float(s.masterVolume)), rate: 1.0)
+        } else {
+            _ = SoundEffectEngine.shared.playDuck(.happyQuack, priority: .low)
+        }
     }
 
     func playBite(volume: Float = 0.07) {
         let s = GooseSettings.shared
-        guard s.soundEffects, !s.muteGoose, let player = bite else { return }
-        let volume = min(1, volume * Float(s.masterVolume))
-        player.volume = volume
-        player.currentTime = 0
-        player.play()
+        guard s.masterSoundEnabled, s.soundEffects, !s.muteGoose else { return }
+        if let player = bite {
+            player.volume = min(1, volume * Float(s.masterVolume))
+            player.currentTime = 0
+            player.play()
+        } else {
+            _ = SoundEffectEngine.shared.playMovement(.beakPeck, category: .footsteps, priority: .low)
+        }
     }
 
     private func load() {
         honks = ["Honk1.mp3", "Honk2.mp3", "Honk3.mp3", "Honk4.mp3"].compactMap(makePlayer)
         pats = ["Pat1.wav", "Pat2.wav", "Pat3.wav"].compactMap(makePlayer)
         bite = makePlayer(filename: "BITE.mp3")
-        didLoadAnything = !honks.isEmpty || !pats.isEmpty || bite != nil
     }
 
     private func makePlayer(filename: String) -> AVAudioPlayer? {

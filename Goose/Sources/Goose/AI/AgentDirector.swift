@@ -92,9 +92,13 @@ final class AgentDirector {
         case .deepSleep:
             scheduler.request(priority: .ambient, task: DeepSleepTask(effects: effects, personality: goosePersonality), behavior: .sleepMode, timeout: 95, on: simulation)
         case .note:
-            guard scheduler.allowsTaskStart(priority: .prank, behavior: .stickyNotes, on: simulation) else { return }
-            let title = decision.noteTitle.isEmpty ? "untitled.txt" : decision.noteTitle
-            let body = decision.noteBody.isEmpty ? "honk" : decision.noteBody
+            guard settings.notepadDeliveriesEnabled,
+                  scheduler.allowsTaskStart(priority: .prank, behavior: .stickyNotes, on: simulation) else { return }
+            let customPick = UserContentManager.shared.pickNextNotepadMessage()
+            let title = decision.noteTitle.isEmpty ? customPick.title : decision.noteTitle
+            let body = settings.aiEnabled && settings.aiPrankText && !decision.noteBody.isEmpty
+                ? decision.noteBody
+                : customPick.body
             if settings.aiEnabled {
                 NotificationManager.shared.post(
                     category: .aiMessage,
@@ -102,13 +106,24 @@ final class AgentDirector {
                     body: body.replacingOccurrences(of: "\n", with: " ")
                 )
             }
-            GooseStats.shared.recordPrank("Sticky note: \(title)", kind: .note)
+            GooseStats.shared.recordPrank("Dragged notepad: \(title)", kind: .note)
             scheduler.request(
                 priority: .prank,
-                task: DragWindowTask(gooseID: gooseID, effects: effects) {
-                    FloatingWindow.note(title: title, body: body)
-                },
+                task: NotepadDeliveryTask(gooseID: gooseID, title: title, body: body, effects: effects),
                 behavior: .stickyNotes,
+                timeout: 30,
+                on: simulation
+            )
+        case .meme:
+            guard settings.memesEnabled,
+                  !settings.allPranksDisabled,
+                  let memeItem = UserContentManager.shared.pickNextMeme(),
+                  scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return }
+            GooseStats.shared.recordPrank("Delivered meme: \(memeItem.filename)", kind: .window)
+            scheduler.request(
+                priority: .prank,
+                task: MemeDeliveryTask(gooseID: gooseID, item: memeItem, effects: effects),
+                behavior: .windowPranks,
                 timeout: 30,
                 on: simulation
             )

@@ -115,7 +115,7 @@ enum GooseBehavior: String, CaseIterable, Identifiable, Sendable {
 final class GooseSettings: ObservableObject {
     static let shared = GooseSettings()
 
-    static let schemaVersion = 3
+    static let schemaVersion = 4
     private let defaults: UserDefaults
     private let prefix = "settings."
 
@@ -201,6 +201,40 @@ final class GooseSettings: ObservableObject {
     @Published var hotkeysEnabled: Bool { didSet { save("hotkeysEnabled", hotkeysEnabled); onHotkeysChanged?() } }
     @Published private(set) var hotkeyBindings: [String: HotkeyBinding]
     var onHotkeysChanged: (() -> Void)?
+
+    // Ultimate Desktop Goose (v2.1): Audio, Memes, Notepads, Personality Packs, Screen Observation
+    @Published var masterSoundEnabled: Bool { didSet { save("masterSoundEnabled", masterSoundEnabled); if !masterSoundEnabled { SoundEffectEngine.shared.stopAll() } } }
+    @Published var duckSoundsEnabled: Bool { didSet { save("duckSoundsEnabled", duckSoundsEnabled) } }
+    @Published var gooseSoundsEnabled: Bool { didSet { save("gooseSoundsEnabled", gooseSoundsEnabled) } }
+    @Published var footstepsEnabled: Bool { didSet { save("footstepsEnabled", footstepsEnabled) } }
+    @Published var memeSoundsEnabled: Bool { didSet { save("memeSoundsEnabled", memeSoundsEnabled) } }
+    @Published var notepadSoundsEnabled: Bool { didSet { save("notepadSoundsEnabled", notepadSoundsEnabled) } }
+    @Published var randomPitchVariation: Bool { didSet { save("randomPitchVariation", randomPitchVariation) } }
+    @Published var ambientSoundFrequency: Double { didSet { save("ambientSoundFrequency", ambientSoundFrequency) } }
+
+    @Published var memesEnabled: Bool { didSet { save("memesEnabled", memesEnabled) } }
+    @Published var maxVisibleMemes: Int { didSet { save("maxVisibleMemes", maxVisibleMemes) } }
+    @Published var memeLifetime: Double { didSet { save("memeLifetime", memeLifetime) } }
+
+    @Published var notepadDeliveriesEnabled: Bool { didSet { save("notepadDeliveriesEnabled", notepadDeliveriesEnabled) } }
+    @Published var notepadMinInterval: Double { didSet { save("notepadMinInterval", notepadMinInterval) } }
+    @Published var notepadMaxInterval: Double { didSet { save("notepadMaxInterval", notepadMaxInterval) } }
+    @Published var maxVisibleNotepads: Int { didSet { save("maxVisibleNotepads", maxVisibleNotepads) } }
+    @Published var notepadLifetime: Double { didSet { save("notepadLifetime", notepadLifetime) } }
+    @Published var preventRepeatedMessages: Bool { didSet { save("preventRepeatedMessages", preventRepeatedMessages) } }
+    @Published var deliveryAnimationSpeed: Double { didSet { save("deliveryAnimationSpeed", deliveryAnimationSpeed) } }
+
+    @Published var personalityCategory: GoosePersonalityCategory { didSet { save("personalityCategory", personalityCategory.rawValue) } }
+    @Published var disabledPhrasePacks: [String] { didSet { save("disabledPhrasePacks", disabledPhrasePacks) } }
+
+    @Published var screenObservationMode: ScreenObservationMode { didSet { save("screenObservationMode", screenObservationMode.rawValue) } }
+    @Published var dontAskScreenPermissionAutomatically: Bool { didSet { save("dontAskScreenPermissionAutomatically", dontAskScreenPermissionAutomatically) } }
+
+    @Published var wanderingEnabled: Bool { didSet { save("wanderingEnabled", wanderingEnabled) } }
+    @Published var quietMode: Bool { didSet { save("quietMode", quietMode) } }
+    @Published var nighttimeQuietHours: Bool { didSet { save("nighttimeQuietHours", nighttimeQuietHours) } }
+    @Published var quietStartHour: Int { didSet { save("quietStartHour", quietStartHour) } }
+    @Published var quietEndHour: Int { didSet { save("quietEndHour", quietEndHour) } }
 
     /// Last error from the Login Item registration, surfaced in the UI.
     @Published private(set) var launchAtLoginError: String?
@@ -298,6 +332,50 @@ final class GooseSettings: ObservableObject {
             }
         }
         hotkeyBindings = loadedHotkeys
+
+        masterSoundEnabled = get("masterSoundEnabled", true)
+        duckSoundsEnabled = get("duckSoundsEnabled", true)
+        gooseSoundsEnabled = get("gooseSoundsEnabled", true)
+        footstepsEnabled = get("footstepsEnabled", true)
+        memeSoundsEnabled = get("memeSoundsEnabled", true)
+        notepadSoundsEnabled = get("notepadSoundsEnabled", true)
+        randomPitchVariation = get("randomPitchVariation", true)
+        ambientSoundFrequency = get("ambientSoundFrequency", 1.0)
+
+        memesEnabled = get("memesEnabled", true)
+        maxVisibleMemes = get("maxVisibleMemes", 3)
+        memeLifetime = get("memeLifetime", 30.0)
+
+        notepadDeliveriesEnabled = get("notepadDeliveriesEnabled", true)
+        notepadMinInterval = get("notepadMinInterval", 25.0)
+        notepadMaxInterval = get("notepadMaxInterval", 75.0)
+        maxVisibleNotepads = get("maxVisibleNotepads", 4)
+        notepadLifetime = get("notepadLifetime", 35.0)
+        preventRepeatedMessages = get("preventRepeatedMessages", true)
+        deliveryAnimationSpeed = get("deliveryAnimationSpeed", 1.0)
+
+        personalityCategory = GoosePersonalityCategory(rawValue: get("personalityCategory", GoosePersonalityCategory.sarcastic.rawValue)) ?? .sarcastic
+        disabledPhrasePacks = (defaults.stringArray(forKey: p + "disabledPhrasePacks")) ?? []
+
+        screenObservationMode = ScreenObservationMode(rawValue: get("screenObservationMode", ScreenObservationMode.automaticBackground.rawValue)) ?? .automaticBackground
+        dontAskScreenPermissionAutomatically = get("dontAskScreenPermissionAutomatically", false)
+
+        wanderingEnabled = get("wanderingEnabled", true)
+        quietMode = get("quietMode", false)
+        nighttimeQuietHours = get("nighttimeQuietHours", false)
+        quietStartHour = get("quietStartHour", 23)
+        quietEndHour = get("quietEndHour", 7)
+    }
+
+    func isQuietHoursActive(at date: Date = Date()) -> Bool {
+        guard nighttimeQuietHours else { return false }
+        let hour = Calendar.current.component(.hour, from: date)
+        if quietStartHour == quietEndHour { return true }
+        if quietStartHour < quietEndHour {
+            return hour >= quietStartHour && hour < quietEndHour
+        } else {
+            return hour >= quietStartHour || hour < quietEndHour
+        }
     }
 
     // MARK: Persistence helpers
@@ -319,6 +397,9 @@ final class GooseSettings: ObservableObject {
         }
         if stored < 3 {
             // v2 -> v3: preserve all v2 keys; Phase 4 keys fall back to defaults.
+        }
+        if stored < 4 {
+            // v3 -> v4: preserve all v3 keys; v2.1 audio/meme/notepad/observation keys fall back to defaults.
         }
         if stored != schemaVersion { defaults.set(schemaVersion, forKey: key) }
     }
@@ -450,6 +531,33 @@ final class GooseSettings: ObservableObject {
         notifyGooseSleeping = true
         hotkeysEnabled = true
         resetHotkeys()
+        masterSoundEnabled = true
+        duckSoundsEnabled = true
+        gooseSoundsEnabled = true
+        footstepsEnabled = true
+        memeSoundsEnabled = true
+        notepadSoundsEnabled = true
+        randomPitchVariation = true
+        ambientSoundFrequency = 1.0
+        memesEnabled = true
+        maxVisibleMemes = 3
+        memeLifetime = 30.0
+        notepadDeliveriesEnabled = true
+        notepadMinInterval = 25.0
+        notepadMaxInterval = 75.0
+        maxVisibleNotepads = 4
+        notepadLifetime = 35.0
+        preventRepeatedMessages = true
+        deliveryAnimationSpeed = 1.0
+        personalityCategory = .sarcastic
+        disabledPhrasePacks = []
+        screenObservationMode = .automaticBackground
+        dontAskScreenPermissionAutomatically = false
+        wanderingEnabled = true
+        quietMode = false
+        nighttimeQuietHours = false
+        quietStartHour = 23
+        quietEndHour = 7
         launchAtLogin = launchState   // login item is a system registration; leave as is
     }
 

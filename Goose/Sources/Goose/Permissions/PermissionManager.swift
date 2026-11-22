@@ -12,6 +12,7 @@ final class PermissionManager: ObservableObject {
 
     @Published private(set) var screenRecordingState: PermissionState
     @Published private(set) var accessibilityState: PermissionState
+    @Published private(set) var screenObservationStatus: ScreenObservationStatus = .disabled
     @Published private(set) var lastScreenCaptureError: ScreenCaptureFailure?
     @Published private(set) var lastAccessibilityValidation: AccessibilityValidationResult = .notTrusted
     @Published private(set) var diagnostics: PermissionDiagnosticsReport?
@@ -56,8 +57,48 @@ final class PermissionManager: ObservableObject {
 
     func refreshAll(validateLiveAX: Bool = true) {
         refreshScreenRecording()
+        refreshScreenObservationStatus()
         refreshAccessibility(validateLive: validateLiveAX)
         refreshDiagnostics()
+    }
+
+    func refreshScreenObservationStatus() {
+        let s = GooseSettings.shared
+        switch s.screenObservationMode {
+        case .disabled:
+            screenObservationStatus = .disabled
+        case .systemContentPicker:
+            let picker = ContentSharingPickerController.shared
+            if picker.isSharingActive {
+                screenObservationStatus = .userSelectedScreen(picker.selectedSourceLabel)
+            } else {
+                screenObservationStatus = .stopped
+            }
+        case .automaticBackground:
+            switch screenRecordingState {
+            case .authorized:
+                screenObservationStatus = s.screenRecognition ? .enabled : .disabled
+            case .restartRequired(let reason):
+                screenObservationStatus = .restartRequired(reason)
+            case .requestInitiated, .notAuthorized, .error, .unableToVerify:
+                screenObservationStatus = .waitingForAuthorization
+            }
+        }
+    }
+
+    func setScreenObservationMode(_ mode: ScreenObservationMode) {
+        GooseSettings.shared.screenObservationMode = mode
+        switch mode {
+        case .disabled:
+            GooseSettings.shared.screenRecognition = false
+            ContentSharingPickerController.shared.stopSharing()
+        case .systemContentPicker:
+            GooseSettings.shared.screenRecognition = true
+        case .automaticBackground:
+            GooseSettings.shared.screenRecognition = true
+            ContentSharingPickerController.shared.stopSharing()
+        }
+        refreshScreenObservationStatus()
     }
 
     // MARK: - Screen Recording
@@ -82,6 +123,9 @@ final class PermissionManager: ObservableObject {
     }
 
     func requestScreenRecordingAccess() {
+        guard GooseSettings.shared.screenObservationMode != .disabled else {
+            return
+        }
         screenRequestInitiated = true
         let immediate = CGRequestScreenCaptureAccess()
         if immediate {

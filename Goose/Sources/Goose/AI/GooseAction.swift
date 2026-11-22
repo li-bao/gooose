@@ -10,6 +10,7 @@ enum GooseDecisionType: String, Sendable {
     case nap
     case deepSleep
     case note
+    case meme
     case photo
     case browse
     case chill

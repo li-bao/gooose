@@ -658,6 +658,107 @@ enum SelfTest {
         finish()
     }
 
+    // MARK: Ultimate (Audio, Memes, Notepads, Screen Observation)
+
+    static func ultimate() async -> Never {
+        let s = GooseSettings.shared
+        s.restoreDefaults()
+
+        // 1. Audio synthesis, mute, and cooldowns
+        let engine = SoundEffectEngine.shared
+        s.muteGoose = true
+        check("muteGoose blocks duck sound", !engine.playDuck(.shortQuack, cooldown: 0))
+        check("muteGoose blocks goose sound", !engine.playGoose(.classicHonk, cooldown: 0))
+        s.muteGoose = false
+        s.masterSoundEnabled = true
+        s.duckSoundsEnabled = true
+        s.gooseSoundsEnabled = true
+        s.footstepsEnabled = true
+        check("duck sound plays when unmuted", engine.playDuck(.happyQuack, cooldown: 0))
+        check("goose sound plays when unmuted", engine.playGoose(.classicHonk, cooldown: 0))
+        check("movement sound plays when unmuted", engine.playMovement(.notepadLand, category: .notepad, cooldown: 0))
+        check("cooldown prevents rapid duplicate", !engine.playDuck(.happyQuack, cooldown: 10.0))
+        engine.stopAll()
+
+        // 2. UserContentManager: PNG, JPG, animated GIF, UTF-8 Chinese/Emoji, PhrasePacks, deduplication
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("goose-ultimate-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let ucm = UserContentManager(rootURL: tempRoot, watchFilesystem: false)
+        check("seeded Example.png exists", ucm.memes.contains { $0.filename == "Example.png" })
+        check("seeded phrase pack exists", !ucm.phrasePacks.isEmpty)
+
+        // Create a real 2-frame animated GIF on disk and import it
+        let srcDir = tempRoot.appendingPathComponent("ImportSource", isDirectory: true)
+        try? FileManager.default.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        let gifURL = srcDir.appendingPathComponent("anim.gif")
+        if let dest = CGImageDestinationCreateWithURL(gifURL as CFURL, "com.compuserve.gif" as CFString, 2, nil) {
+            let gifProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary
+            CGImageDestinationSetProperties(dest, gifProps)
+            let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.08]] as CFDictionary
+            for shade in [UInt8(40), UInt8(200)] {
+                var px = [UInt8](repeating: shade, count: 16 * 16 * 4)
+                let ctx = CGContext(data: &px, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 16 * 4,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                CGImageDestinationAddImage(dest, ctx.makeImage()!, frameProps)
+            }
+            CGImageDestinationFinalize(dest)
+        }
+        let gifImport = ucm.importMemes(from: [gifURL])
+        check("animated GIF imported", gifImport.imported == 1)
+        check("animated GIF detected with 2 frames", ucm.memes.contains { $0.isAnimatedGIF && $0.frameCount == 2 })
+        check("original GIF untouched", FileManager.default.fileExists(atPath: gifURL.path))
+
+        let dupImport = ucm.importMemes(from: [gifURL])
+        check("duplicate meme rejected", dupImport.imported == 0 && !dupImport.errors.isEmpty)
+
+        if let animItem = ucm.memes.first(where: { $0.isAnimatedGIF }) {
+            let decoded = MemeImageDecoder.decode(url: animItem.url)
+            check("MemeImageDecoder decodes all GIF frames", decoded?.isAnimated == true && decoded?.frames.count == 2)
+            try? ucm.renameMeme(animItem, to: "renamed-anim")
+            check("rename meme updates filename", ucm.memes.contains { $0.filename == "renamed-anim.gif" })
+            if let renamed = ucm.memes.first(where: { $0.filename == "renamed-anim.gif" }) {
+                ucm.deleteMeme(renamed)
+                check("delete meme removes item", !ucm.memes.contains { $0.filename == "renamed-anim.gif" })
+            }
+        }
+
+        // UTF-8 Traditional Chinese & Emoji notepad + PhrasePack parsing
+        let zhText = "你真的覺得這樣能成功嗎？🪿\n第二行內容"
+        ucm.saveNotepadMessage(filename: "zh-test.txt", content: zhText)
+        check("UTF-8 Traditional Chinese notepad loaded intact", ucm.notepadMessages.contains { $0.content == zhText })
+
+        let parsed = UserContentManager.parsePhrasePackLines("# comment\n\nline one\nline one\n你確定嗎？ 🦆\n")
+        check("PhrasePack skips # comments, empty lines, and deduplicates", parsed == ["line one", "你確定嗎？ 🦆"])
+
+        // 3. GooseNotepadWindow creation & multi-display clamping
+        let npWin = GooseNotepadWindow(title: "zh-test.txt", body: zhText)
+        check("GooseNotepadWindow preserves title & body", npWin.noteTitle == "zh-test.txt" && npWin.noteBody == zhText)
+        npWin.close()
+
+        let clamped = MemeDeliveryTask.clampWindowOrigin(CGPoint(x: -5000, y: -5000), windowSize: CGSize(width: 280, height: 195), onlyClampAtFinal: true)
+        check("off-screen origin clamped back onto visible screen", clamped.x > -5000 && clamped.y > -5000)
+
+        // 4. Smart Screen Observation Modes
+        let pm = PermissionManager.shared
+        pm.setScreenObservationMode(.disabled)
+        check("Mode C (.disabled) sets status .disabled", pm.screenObservationStatus == .disabled)
+        let capDisabled = await ScreenCapturer().captureMainDisplayResult()
+        if case .failure(.permissionNotGranted) = capDisabled {
+            check("Mode C (.disabled) blocks screen capture", true)
+        } else {
+            check("Mode C (.disabled) blocks screen capture", false)
+        }
+
+        pm.setScreenObservationMode(.systemContentPicker)
+        ContentSharingPickerController.shared.stopSharing()
+        check("Mode B (.systemContentPicker) stopped when no source chosen", pm.screenObservationStatus == .stopped)
+
+        s.restoreDefaults()
+        finish()
+    }
+
     // MARK: Runtime (live app)
 
     static func startRuntime() {

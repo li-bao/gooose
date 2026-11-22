@@ -49,6 +49,12 @@ final class GooseTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("ALL PASSED"))
     }
 
+    func testUltimateFeaturesSelfTest() throws {
+        let result = try runGoose(args: ["--selftest-ultimate"])
+        XCTAssertEqual(result.status, 0, "stderr: \(result.stderr)\nstdout: \(result.stdout)")
+        XCTAssertTrue(result.stdout.contains("ALL PASSED"))
+    }
+
     func testDiagnosePermissionsOutputsReport() throws {
         let result = try runGoose(args: ["--diagnose-permissions"])
         XCTAssertEqual(result.status, 0, "stderr: \(result.stderr)")

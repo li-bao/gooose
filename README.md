@@ -6,7 +6,10 @@ A native macOS desktop pet written in **Swift 6.2**, **AppKit**, **SwiftUI**, an
 
 ## Features
 
-- **Native macOS Settings Center (`⌘,`) & Control Center**: SwiftUI + AppKit 9-tab configuration (`General`, `Goose`, `Chaos`, `Behaviors`, `Sounds`, `Personality`, `AI`, `Privacy`, `About`) and a live telemetry/control dashboard.
+- **Native macOS Settings Center (`⌘,`) & Control Center**: 9-tab SwiftUI + AppKit interface (`Overview`, `Goose Behavior`, `Audio`, `Memes`, `Notepad Messages`, `Personality Packs`, `Screen Observation`, `Permissions`, `Advanced Settings`) plus live Control Center.
+- **Duck, Goose & Movement Sound Effects**: Original procedural DSP `AVAudioEngine` sound synthesis (no copyrighted game audio) with duck quacks, goose honks, footsteps, paper slides, per-sound cooldowns, pitch randomization, quiet hours, custom sound imports, and instant **Mute All Audio**.
+- **Custom Memes & Dragged Notepads**: Persistent local `UserContent/` directory (`~/Library/Application Support/Super Goose Desktop/UserContent/`) supporting PNG, JPG, JPEG, animated GIFs (`ImageIO`), UTF-8 multilingual `.txt` notes (Traditional/Simplified Chinese, English, Emoji), `#`-commented `PhrasePacks`, and physical off-screen Bezier-dragged `GooseNotepadWindow` & `MemeWindow` deliveries.
+- **Smart Screen Observation Control**: Choose between **Automatic Background Observation**, **System Content Picker (`SCContentSharingPicker`)**, or **Completely Disabled** (zero ScreenCaptureKit / permission requests).
 - **Multi-Goose Engine & Resource Arbitration**: Run up to 5 independent geese (`GooseManager`) with individual personalities (`GoosePersonality`), energy, cooldowns, and peer interactions (`GooseInteractionSystem`). `GlobalActionCoordinator` guarantees mutual exclusion for Mouse and Window locks.
 - **Prank & Ambient Behaviors**:
   - Mouse Chase & Mouse Theft (`CGWarpMouseCursorPosition` with Emergency Stop release)

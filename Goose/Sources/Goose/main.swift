@@ -26,6 +26,10 @@ if CommandLine.arguments.contains("--selftest-permissions") {
     Task { @MainActor in await SelfTest.permissions() }
     RunLoop.main.run()
 }
+if CommandLine.arguments.contains("--selftest-ultimate") {
+    Task { @MainActor in await SelfTest.ultimate() }
+    RunLoop.main.run()
+}
 if CommandLine.arguments.contains("--selftest-multigoose") { SelfTest.startMultiGoose() }
 if CommandLine.arguments.contains("--selftest-phase4") { SelfTest.startPhase4() }
 if CommandLine.arguments.contains("--selftest-perf") { SelfTest.startPerf() }

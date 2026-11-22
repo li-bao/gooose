@@ -59,8 +59,9 @@ final class GooseBrain {
         let hasAX = AccessibilityProbe.hasAccessibilityPermission
 
         var weights: [(GooseDecisionType, Double)] = [
-            (.wander, 28),
-            (.note, settings.allows(.stickyNotes) ? 24 * prank : 0),
+            (.wander, settings.wanderingEnabled ? 28 : 0),
+            (.note, (settings.allows(.stickyNotes) && settings.notepadDeliveriesEnabled) ? 24 * prank : 0),
+            (.meme, (settings.memesEnabled && !UserContentManager.shared.memes.isEmpty && !settings.allPranksDisabled) ? 16 * prank * curious : 0),
             (.nap, settings.allows(.sleepMode) ? 6 * lazy : 0),
             (.deepSleep, settings.allows(.sleepMode) ? 9 * lazy : 0),
             (.photo, windows ? 7 * prank * curious : 0),
@@ -86,6 +87,7 @@ final class GooseBrain {
 
         switch chosen {
         case .note: return await pickNote(bucket: bucket, tone: tone, snapshot: snapshot, goosePersonality: goosePersonality)
+        case .meme: return GooseDecision(action: .meme)
         case .nap: return GooseDecision(action: .nap)
         case .deepSleep: return GooseDecision(action: .deepSleep)
         case .photo: return GooseDecision(action: .photo)
@@ -155,6 +157,7 @@ final class GooseBrain {
         case .nap: return "nap"
         case .deepSleep: return "deepSleep"
         case .note: return "note(\(decision.noteTitle.prefix(30)))"
+        case .meme: return "meme"
         case .photo: return "photo"
         case .browse: return "browse(\(decision.browseURL?.absoluteString.prefix(40) ?? ""))"
         case .chill: return "chill(\(decision.spotifyURI?.suffix(20) ?? ""))"

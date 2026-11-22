@@ -19,9 +19,10 @@ This repository builds upon and acknowledges the following projects and external
 - **License**: Upstream repository does not declare an OSI-approved open-source license (`license: null`).
 - **Handling**: Sprite PNGs are **not** committed or redistributed in this repository. During local setup/builds, developers can supply compatible sprites in `Goose/Sources/Goose/Resources/Sprites/Goose/`.
 
-## 4. Audio Samples (Not Redistributed)
+## 4. Audio Samples & Procedural Sound Synthesis
 - **Origin**: *Untitled Goose Game* sound samples referenced by `AudioPlayer.swift` (`Honk1-4.mp3`, `Pat1-3.wav`, `BITE.mp3`).
-- **Handling**: Audio files are **not** bundled or redistributed in this repository due to copyright restrictions. Users may optionally supply their own audio files via `GOOSE_AUDIO_PATH`.
+- **Handling**: Copyrighted audio files are **not** bundled or redistributed in this repository. Users may optionally supply their own audio files via `GOOSE_AUDIO_PATH` or `~/Library/Application Support/Super Goose Desktop/UserContent/Sounds/`.
+- **Built-in Audio**: All default duck, goose, and movement sounds in `SoundSynthesis.swift` are 100% original procedural DSP waveforms synthesized locally at runtime under the repository's MIT License.
 
 ## 5. System Frameworks
 - Built against native Apple macOS SDK frameworks: `AppKit`, `SwiftUI`, `SpriteKit`, `ScreenCaptureKit`, `Vision`, `ApplicationServices`, `Security`, `ServiceManagement`, `Carbon`, `UserNotifications`, `WebKit`, `AVFoundation`, and `FoundationModels`.

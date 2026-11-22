@@ -1,15 +1,7 @@
 import Foundation
 
-/// Independent honk cadence — decoupled from the agent decision loop.
-///
-/// Two parallel tasks:
-/// 1. Base ticker: sleeps `Tuning.honkBaseRange`, fires `simulation.onHonk?()`.
-/// 2. App-change watcher: polls `perception.lastFrontmostAppName` every 2s; on
-///    change, fires a bonus honk if `Tuning.honkAppChangeDebounce` has passed
-///    since the last bonus.
-///
-/// Ownership: caller (typically `GooseScene`) holds an instance and calls
-/// `start()` once after wiring `simulation.onHonk`. `stop()` cancels both tasks.
+/// Independent ambient sound cadence — triggers both duck quacks and goose honks
+/// according to user sound category toggles, quiet mode, and sound frequency.
 @MainActor
 final class HonkTicker {
     private weak var simulation: GooseSimulation?
@@ -28,13 +20,23 @@ final class HonkTicker {
         stop()
         baseTask = Task { [weak self] in
             while !Task.isCancelled {
-                let freq = max(0.1, GooseSettings.shared.soundFrequency)
+                let s = GooseSettings.shared
+                let freq = max(0.1, s.ambientSoundFrequency * s.soundFrequency)
                 let seconds = Double.random(in: Tuning.honkBaseRange) / freq
                 try? await Task.sleep(for: .seconds(seconds))
                 if Task.isCancelled { return }
-                guard GooseSettings.shared.randomHonking, GooseController.shared.allowsProactive else { continue }
-                if let sim = self?.simulation, !(sim.currentTask is NapTask || sim.currentTask is DeepSleepTask) {
-                    sim.onHonk?()
+                guard s.randomHonking,
+                      s.masterSoundEnabled,
+                      !s.muteGoose,
+                      !s.isQuietHoursActive(),
+                      GooseController.shared.allowsProactive else { continue }
+
+                if let sim = self?.simulation {
+                    if sim.currentTask is NapTask || sim.currentTask is DeepSleepTask {
+                        _ = SoundEffectEngine.shared.playGoose(.sleepingSound, priority: .low, cooldown: 6.0)
+                    } else {
+                        sim.onHonk?()
+                    }
                 }
             }
         }
@@ -57,7 +59,12 @@ final class HonkTicker {
     private func checkAppChange() {
         let current = perception?.lastFrontmostAppName
         defer { lastSeenApp = current }
-        guard GooseSettings.shared.randomHonking, GooseController.shared.allowsProactive else { return }
+        let s = GooseSettings.shared
+        guard s.randomHonking,
+              s.masterSoundEnabled,
+              !s.muteGoose,
+              !s.isQuietHoursActive(),
+              GooseController.shared.allowsProactive else { return }
         guard let current, current != lastSeenApp, lastSeenApp != nil else { return }
         let now = Date()
         guard now.timeIntervalSince(lastBonusHonk) >= Tuning.honkAppChangeDebounce else { return }

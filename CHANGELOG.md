@@ -1,5 +1,26 @@
 # Changelog — Super Goose Desktop
 
+## [2.1.0] — 2026-11-22
+
+### Ultimate Desktop Goose Experience
+- **Duck, Goose & Movement Sound Effects (`SoundSynthesis`, `SoundEffectEngine`, `HonkTicker`)**:
+  - Added 100% original procedural DSP audio synthesis (no copyrighted *Untitled Goose Game* samples) for Duck (`shortQuack`, `longQuack`, `angryQuack`, `happyQuack`, `surprisedQuack`, `quietMutter`, `repeatedQuacking`), Goose (`classicHonk`, `aggressiveHonk`, `excitedHonk`, `warningHonk`, `sleepingSound`), and Movement (`tinyFootstep`, `runningFootstep`, `wingFlap`, `beakPeck`, `draggingObject`, `paperSlide`, `notepadLand`, `memeDrag`).
+  - Added multi-channel `AVAudioEngine` playback with per-sound cooldowns, pitch/volume randomization, category toggles, quiet mode, nighttime quiet hours, and instant Mute All Audio.
+- **Persistent User Content & Custom Memes (`UserContentManager`, `MemeWindow`, `MemeDeliveryTask`)**:
+  - Created `~/Library/Application Support/Super Goose Desktop/UserContent/` (`Memes/`, `Sounds/`, `NotepadMessages/`, `PhrasePacks/`, `Settings/`) with filesystem watching and non-destructive default seeds (`Example.png`, `example.txt`).
+  - Added PNG, JPG, JPEG, and multi-frame animated GIF decoding (`ImageIO`), SHA-256 duplicate detection, drag-and-drop import, rename, and delete.
+  - Added `MemeDeliveryTask` dragging `MemeWindow` onto screen from outside display bounds along a quadratic Bezier path.
+- **Iconic Dragged Notepads & Phrase Packs (`GooseNotepadWindow`, `NotepadDeliveryTask`)**:
+  - Added interactive borderless `GooseNotepadWindow` (paper theme in Light/Dark mode, Copy button, Close button, scrollable UTF-8 multiline text including Traditional/Simplified Chinese and Emoji).
+  - Added `NotepadDeliveryTask` physically pulling the notepad onto the desktop from off-screen bounds with configurable intervals, lifetime, and anti-repetition.
+  - Added `PhrasePacks` `.txt` parser (`#` comment & blank-line filtering, deduplication) and 8 `GoosePersonalityCategory` styles.
+- **Smart Screen Observation Modes (`ScreenObservationMode`, `ContentSharingPickerController`)**:
+  - Added 3 modes: Automatic Background Observation, Official `SCContentSharingPicker` System Content Picker, and Completely Disabled (zero `ScreenCaptureKit` / `CGRequestScreenCaptureAccess` calls).
+  - Added **Don't ask automatically again** preference and honest macOS security reminder disclosure.
+- **9-Tab Native Settings UI & Menu Bar**:
+  - Reorganized Settings into: `Overview`, `Goose Behavior`, `Audio`, `Memes`, `Notepad Messages`, `Personality Packs`, `Screen Observation`, `Permissions`, and `Advanced Settings`.
+  - Added **Mute All Audio**, **Deliver Meme Now**, and **Deliver Notepad Now** to the menu bar.
+
 ## [2.0.1] — 2026-11-22
 
 ### macOS TCC Permission Repair & Authorization System

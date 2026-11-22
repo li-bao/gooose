@@ -105,18 +105,33 @@ final class PerceptionEngine {
         let appName = context.appName
         let windowTitle = context.windowTitle
 
-        // Screen recognition is user-controllable and strictly re-checked via
-        // CGPreflightScreenCaptureAccess() before every capture attempt.
+        // Screen observation respects the user's selected mode strictly:
+        // - .disabled: never calls ScreenCaptureKit or CGPreflightScreenCaptureAccess.
+        // - .systemContentPicker: captures only if the user selected a source.
+        // - .automaticBackground: checks CGPreflightScreenCaptureAccess() before capture.
         let image: CGImage?
-        if GooseSettings.shared.screenRecognition && CGPreflightScreenCaptureAccess() {
-            switch await capturer.captureMainDisplayResult() {
-            case .success(let captured):
-                image = captured
-            case .failure:
+        let settings = GooseSettings.shared
+        switch settings.screenObservationMode {
+        case .disabled:
+            image = nil
+        case .systemContentPicker:
+            if ContentSharingPickerController.shared.isSharingActive {
+                switch await capturer.captureMainDisplayResult() {
+                case .success(let captured): image = captured
+                case .failure: image = nil
+                }
+            } else {
                 image = nil
             }
-        } else {
-            image = nil
+        case .automaticBackground:
+            if settings.screenRecognition && CGPreflightScreenCaptureAccess() {
+                switch await capturer.captureMainDisplayResult() {
+                case .success(let captured): image = captured
+                case .failure: image = nil
+                }
+            } else {
+                image = nil
+            }
         }
 
         let fragments: [String]

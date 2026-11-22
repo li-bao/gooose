@@ -2,13 +2,16 @@
 
 Open **Menu Bar (`🪿`) → Permission Center…** to inspect and authorize permissions.
 
-## 1. Screen Recording (`NSScreenCaptureUsageDescription`)
-- **API**: `CGPreflightScreenCaptureAccess()`, `CGRequestScreenCaptureAccess()`, `ScreenCaptureKit` (`SCShareableContent`, `SCScreenshotManager`), Vision OCR (`VNRecognizeTextRequest`).
-- **Behavior**:
+## 1. Screen Recording & Screen Observation Modes (`NSScreenCaptureUsageDescription`)
+- **Three User-Controlled Modes (Settings → Screen Observation)**:
+  1. **Automatic Background Observation**: Uses `ScreenCaptureKit` + on-device Vision OCR when `CGPreflightScreenCaptureAccess()` is granted. Never spams `CGRequestScreenCaptureAccess()` automatically.
+  2. **System Content Picker**: Uses Apple's official `SCContentSharingPicker.shared` so only the display or window you explicitly choose is observed while sharing is active.
+  3. **Completely Disabled**: Never starts `ScreenCaptureKit`, never calls `CGRequestScreenCaptureAccess()`, and stops all screen capture while keeping animations, sounds, memes, and notepads 100% functional.
+- **Note**: macOS itself controls periodic system reauthorization reminders when automatic background capture is enabled; **Don't ask automatically again** ensures Super Goose itself never initiates new requests without your explicit click.
+- **Restart & Blank-Frame Handling**:
   - Re-checked before every screen capture (never cached permanently in `UserDefaults`).
   - Pure black/blank frames are automatically rejected (`ScreenCapturer.isBlackOrBlankImage`).
   - Granting Screen Recording mid-session enters **Restart required**; click **Quit & Reopen** so ScreenCaptureKit receives the new TCC token and resumes pending OCR.
-- **When denied**: OCR is skipped cleanly; goose animation and app-level context continue working.
 
 ## 2. Accessibility (`NSAccessibilityUsageDescription`)
 - **API**: `AXIsProcessTrusted()`, `AXIsProcessTrustedWithOptions` (`kAXTrustedCheckOptionPrompt`), `AXUIElement`.

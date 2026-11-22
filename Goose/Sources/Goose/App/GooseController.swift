@@ -151,6 +151,7 @@ final class GooseController: ObservableObject {
 
     func pauseAll() {
         guard state != .paused else { return }
+        SoundEffectEngine.shared.stopAll()
         scene?.releaseAllControl()
         overlay?.orderFrontRegardless()
         overlay?.setRenderingPaused(true)
@@ -183,10 +184,38 @@ final class GooseController: ObservableObject {
     }
 
     func emergencyStop() {
+        SoundEffectEngine.shared.stopAll()
+        MemeWindowRegistry.shared.closeAll()
+        NotepadWindowRegistry.shared.closeAll()
         scene?.releaseAllControl(closeWindows: true)
         state = .stopped
         refresh()
         FileHandle.standardError.write(Data("[Goose] EMERGENCY STOP: all proactive behavior halted, cursor and windows released\n".utf8))
+    }
+
+    func deliverMemeNow() {
+        guard let scene, let lead = scene.manager.leadGoose, let item = UserContentManager.shared.pickNextMeme() else { return }
+        if state != .running { resumeAll() }
+        GooseStats.shared.recordPrank("Delivered meme: \(item.filename)", kind: .window)
+        _ = BehaviorScheduler.shared.request(
+            priority: .reactive,
+            task: MemeDeliveryTask(gooseID: lead.id, item: item, effects: scene),
+            timeout: 26,
+            on: lead.simulation
+        )
+    }
+
+    func deliverNotepadNow() {
+        guard let scene, let lead = scene.manager.leadGoose else { return }
+        if state != .running { resumeAll() }
+        let pick = UserContentManager.shared.pickNextNotepadMessage()
+        GooseStats.shared.recordPrank("Dragged notepad: \(pick.title)", kind: .note)
+        _ = BehaviorScheduler.shared.request(
+            priority: .reactive,
+            task: NotepadDeliveryTask(gooseID: lead.id, title: pick.title, body: pick.body, effects: scene),
+            timeout: 26,
+            on: lead.simulation
+        )
     }
 
     func spawnGoose() {

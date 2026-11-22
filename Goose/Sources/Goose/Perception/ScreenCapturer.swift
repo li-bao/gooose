@@ -3,24 +3,19 @@ import CoreVideo
 import Foundation
 @preconcurrency import ScreenCaptureKit
 
-/// Captures the main display via ScreenCaptureKit. Always verifies
-/// `CGPreflightScreenCaptureAccess()` before calling ScreenCaptureKit,
-/// distinguishes initialization/permission/restart/blank-frame errors, and
-/// never returns a pure black screenshot as a successful capture.
+/// Captures the screen via ScreenCaptureKit strictly respecting `ScreenObservationMode`:
+/// - `.disabled`: never invokes ScreenCaptureKit or `CGPreflightScreenCaptureAccess`.
+/// - `.systemContentPicker`: captures ONLY from `ContentSharingPickerController.shared.activeFilter`.
+/// - `.automaticBackground`: verifies `CGPreflightScreenCaptureAccess()` before every capture.
 @MainActor
 final class ScreenCapturer {
-    /// Target width for captured images. We let ScreenCaptureKit downscale via
-    /// the GPU instead of doing a CPU-side `CGContext` redraw downstream.
     private static let captureWidth = 1024
-
     private var cachedDisplay: SCDisplay?
 
     func resetDisplayCache() {
         cachedDisplay = nil
     }
 
-    /// Returns a snapshot of the main display already downscaled to ~1024px
-    /// wide, or `nil` if capture failed.
     func captureMainDisplay() async throws -> CGImage? {
         switch await captureMainDisplayResult() {
         case .success(let image):
@@ -31,33 +26,54 @@ final class ScreenCapturer {
     }
 
     func captureMainDisplayResult(bypassRestartGuard: Bool = false) async -> ScreenCaptureResult {
-        guard CGPreflightScreenCaptureAccess() else {
+        let mode = GooseSettings.shared.screenObservationMode
+        switch mode {
+        case .disabled:
             cachedDisplay = nil
-            let failure = ScreenCaptureFailure.permissionNotGranted
-            PermissionManager.shared.recordScreenCaptureOutcome(.failure(failure))
-            return .failure(failure)
+            return .failure(.permissionNotGranted)
+
+        case .systemContentPicker:
+            guard let filter = ContentSharingPickerController.shared.activeFilter else {
+                return .failure(.permissionNotGranted)
+            }
+            return await captureWithFilter(filter, targetWidth: Self.captureWidth, targetHeight: 640)
+
+        case .automaticBackground:
+            guard CGPreflightScreenCaptureAccess() else {
+                cachedDisplay = nil
+                let failure = ScreenCaptureFailure.permissionNotGranted
+                PermissionManager.shared.recordScreenCaptureOutcome(.failure(failure))
+                return .failure(failure)
+            }
+
+            if !bypassRestartGuard,
+               case .restartRequired(let reason) = PermissionManager.shared.screenRecordingState {
+                return .failure(.restartRequired(reason))
+            }
+
+            let display: SCDisplay
+            switch await resolveDisplay() {
+            case .success(let d):
+                display = d
+            case .failure(let failure):
+                PermissionManager.shared.recordScreenCaptureOutcome(.failure(failure))
+                return .failure(failure)
+            }
+
+            let scale = CGFloat(Self.captureWidth) / CGFloat(display.width)
+            let targetHeight = max(1, Int(CGFloat(display.height) * scale))
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            return await captureWithFilter(filter, targetWidth: Self.captureWidth, targetHeight: targetHeight)
         }
+    }
 
-        if !bypassRestartGuard,
-           case .restartRequired(let reason) = PermissionManager.shared.screenRecordingState {
-            return .failure(.restartRequired(reason))
-        }
-
-        let display: SCDisplay
-        switch await resolveDisplay() {
-        case .success(let d):
-            display = d
-        case .failure(let failure):
-            PermissionManager.shared.recordScreenCaptureOutcome(.failure(failure))
-            return .failure(failure)
-        }
-
-        let scale = CGFloat(Self.captureWidth) / CGFloat(display.width)
-        let targetHeight = max(1, Int(CGFloat(display.height) * scale))
-
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+    private func captureWithFilter(
+        _ filter: SCContentFilter,
+        targetWidth: Int,
+        targetHeight: Int
+    ) async -> ScreenCaptureResult {
         let config = SCStreamConfiguration()
-        config.width = Self.captureWidth
+        config.width = targetWidth
         config.height = targetHeight
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.showsCursor = false
@@ -78,7 +94,9 @@ final class ScreenCapturer {
             cachedDisplay = nil
             let nsErr = error as NSError
             let failure: ScreenCaptureFailure
-            if Self.isLikelyTCCDeclinedError(nsErr) && CGPreflightScreenCaptureAccess() {
+            if Self.isLikelyTCCDeclinedError(nsErr)
+                && GooseSettings.shared.screenObservationMode == .automaticBackground
+                && CGPreflightScreenCaptureAccess() {
                 failure = .restartRequired("ScreenCaptureKit declined capture even though preflight is granted (\(nsErr.localizedDescription)). Quit and reopen Super Goose Desktop.")
             } else {
                 failure = .captureFailed(nsErr.localizedDescription)

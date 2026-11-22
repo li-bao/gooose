@@ -90,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         menu.addItem(.separator())
         add(controller.state == .running ? L("Pause") : L("Resume"), #selector(togglePause),
             symbol: controller.state == .running ? "pause.fill" : "play.fill")
+        add(settings.muteGoose ? L("Unmute Audio") : L("Mute All Audio"), #selector(toggleMuteAudio),
+            symbol: settings.muteGoose ? "speaker.slash.fill" : "speaker.wave.2.fill")
+        add(L("Deliver Meme Now"), #selector(deliverMemeNow), symbol: "photo.on.rectangle")
+        add(L("Deliver Notepad Now"), #selector(deliverNotepadNow), symbol: "note.text")
         add(settings.isEnabled(.mouseTheft) ? L("Disable Mouse Theft") : L("Enable Mouse Theft"), #selector(toggleMouseTheft), symbol: "cursorarrow.slash")
         add(settings.allPranksDisabled ? L("Enable All Pranks") : L("Disable All Pranks"), #selector(toggleAllPranks), symbol: "theatermasks")
         add(L("Clear Desktop Mess"), #selector(clearDesktopMess), symbol: "sparkles.rectangle.stack")
@@ -172,6 +176,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     @objc func openPermissionCenter() { Windows.permissionCenter.show() }
     @objc func openSettings() { Windows.settings.show() }
     @objc private func togglePause() { controller.togglePause() }
+    @objc private func toggleMuteAudio() {
+        settings.muteGoose.toggle()
+        if settings.muteGoose { SoundEffectEngine.shared.stopAll() }
+    }
+    @objc private func deliverMemeNow() { controller.deliverMemeNow() }
+    @objc private func deliverNotepadNow() { controller.deliverNotepadNow() }
     @objc private func toggleMouseTheft() { controller.toggleMouseTheft() }
     @objc private func toggleAllPranks() { controller.toggleAllPranks() }
     @objc private func clearDesktopMess() { controller.clearDesktopMess() }
