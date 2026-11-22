@@ -73,7 +73,7 @@ final class OpenAIClient: LLMProvider {
         // replaced by `max_completion_tokens`. Set reasoning_effort: "low" so
         // the model doesn't burn 30s thinking about a sticky note.
         // The token budget covers both reasoning + final JSON.
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": Self.model,
             "messages": [
                 ["role": "system", "content": systemPrompt],
@@ -81,8 +81,11 @@ final class OpenAIClient: LLMProvider {
             ],
             "response_format": ["type": "json_object"],
             "max_completion_tokens": 1500,
-            "reasoning_effort": "low",
         ]
+        let lowerModel = Self.model.lowercased()
+        if lowerModel.hasPrefix("o1") || lowerModel.hasPrefix("o3") || lowerModel.hasPrefix("o4") || lowerModel.hasPrefix("gpt-5") {
+            body["reasoning_effort"] = "low"
+        }
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return nil }
 
         var request = URLRequest(url: Self.endpoint)

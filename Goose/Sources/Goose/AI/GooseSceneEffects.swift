@@ -41,6 +41,12 @@ protocol GooseSceneEffects: AnyObject {
     func detachStolenVirtualIcon()
 
     /// Event-specific audio + particle feedback.
-    func playSoundEvent(_ event: HonkEvent)
+    func playSoundEvent(_ event: HonkEvent, gooseID: UUID?, isSleeping: Bool)
     func spawnHearts(at point: CGPoint, count: Int)
+}
+
+extension GooseSceneEffects {
+    func playSoundEvent(_ event: HonkEvent) {
+        playSoundEvent(event, gooseID: nil, isSleeping: false)
+    }
 }

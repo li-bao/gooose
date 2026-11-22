@@ -24,6 +24,9 @@ final class FullscreenMonitor {
     ]
 
     private var overrideModeForTesting: Mode?
+    private var cachedMode: Mode = .normal
+    private var cachedModeAt: Date = .distantPast
+    private static let cacheTTL: TimeInterval = 1.0
 
     private init() {}
 
@@ -38,11 +41,19 @@ final class FullscreenMonitor {
         guard GooseSettings.shared.fullscreenAwareness else {
             return .normal
         }
+        let now = Date()
+        if now.timeIntervalSince(cachedModeAt) < Self.cacheTTL {
+            return cachedMode
+        }
+        cachedModeAt = now
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            cachedMode = .normal
             return .normal
         }
-        return evaluate(appName: app.localizedName ?? "", bundleID: app.bundleIdentifier ?? "", windowFrame: AccessibilityProbe.frontmostExternalWindow()?.frame)
+        let evaluated = evaluate(appName: app.localizedName ?? "", bundleID: app.bundleIdentifier ?? "", windowFrame: AccessibilityProbe.frontmostExternalWindow()?.frame)
+        cachedMode = evaluated
+        return evaluated
     }
 
     /// Pure evaluation helper (also exercised directly by tests).
@@ -62,8 +73,14 @@ final class FullscreenMonitor {
             return .normal
         }
 
+        let bundleSegments = Set(lowerBundle.split(separator: ".").map(String.init))
         let isMediaApp = Self.knownMediaApps.contains(lowerName)
-            || Self.knownMediaApps.contains(where: { lowerBundle.contains($0.replacingOccurrences(of: " ", with: "")) })
+            || Self.knownMediaApps.contains(where: { app in
+                let token = app.replacingOccurrences(of: " ", with: "")
+                return token.count <= 3
+                    ? bundleSegments.contains(token)
+                    : lowerBundle.contains(token)
+            })
         let isGameApp = Self.knownGameKeywords.contains(where: { lowerName.contains($0) || lowerBundle.contains($0) })
 
         let coversScreen: Bool = {

@@ -102,6 +102,7 @@ struct GooseStatus: Identifiable, Sendable {
     let activity: String
     let isLead: Bool
     let personalitySummary: String
+    let emotion: GooseEmotion
     let energyPercent: Int
     let holdingLock: String?
 }
@@ -151,15 +152,21 @@ final class GooseController: ObservableObject {
 
     func pauseAll() {
         guard state != .paused else { return }
+        let wasHidden = (state == .hidden)
+        GameTime.setPaused(true)
         SoundEffectEngine.shared.stopAll()
+        scene?.stopAudio()
         scene?.releaseAllControl()
-        overlay?.orderFrontRegardless()
+        if !wasHidden {
+            overlay?.orderFrontRegardless()
+        }
         overlay?.setRenderingPaused(true)
         state = .paused
         refresh()
     }
 
     func resumeAll() {
+        GameTime.setPaused(false)
         overlay?.orderFrontRegardless()
         overlay?.setRenderingPaused(false)
         state = .running
@@ -172,6 +179,9 @@ final class GooseController: ObservableObject {
     }
 
     func hideAll() {
+        GameTime.setPaused(true)
+        SoundEffectEngine.shared.stopAll()
+        scene?.stopAudio()
         scene?.releaseAllControl()
         overlay?.setRenderingPaused(true)
         overlay?.orderOut(nil)
@@ -185,6 +195,7 @@ final class GooseController: ObservableObject {
 
     func emergencyStop() {
         SoundEffectEngine.shared.stopAll()
+        scene?.stopAudio()
         MemeWindowRegistry.shared.closeAll()
         NotepadWindowRegistry.shared.closeAll()
         scene?.releaseAllControl(closeWindows: true)
@@ -194,25 +205,44 @@ final class GooseController: ObservableObject {
     }
 
     func deliverMemeNow() {
-        guard let scene, let lead = scene.manager.leadGoose, let item = UserContentManager.shared.pickNextMeme() else { return }
+        guard let picked = MemeLibraryStore.shared.pickWeightedMeme(includeManualOnly: true) else {
+            if let fallback = UserContentManager.shared.pickNextMeme() {
+                deliverMeme(fallback)
+            }
+            return
+        }
+        deliverMeme(picked.0)
+    }
+
+    func deliverMeme(_ item: MemeItem, caption: String = "") {
+        guard let scene, let lead = scene.manager.leadGoose else { return }
         if state != .running { resumeAll() }
+        let resolvedCaption = caption.isEmpty ? (TauntLibraryStore.shared.pickWeightedTaunt()?.content ?? "") : caption
         GooseStats.shared.recordPrank("Delivered meme: \(item.filename)", kind: .window)
         _ = BehaviorScheduler.shared.request(
             priority: .reactive,
-            task: MemeDeliveryTask(gooseID: lead.id, item: item, effects: scene),
+            task: MemeDeliveryTask(gooseID: lead.id, item: item, caption: resolvedCaption, effects: scene),
             timeout: 26,
             on: lead.simulation
         )
     }
 
     func deliverNotepadNow() {
+        if let taunt = TauntLibraryStore.shared.pickWeightedTaunt() {
+            deliverTaunt(taunt.content, title: "\(taunt.category).txt")
+            return
+        }
+        let pick = UserContentManager.shared.pickNextNotepadMessage()
+        deliverTaunt(pick.body, title: pick.title)
+    }
+
+    func deliverTaunt(_ text: String, title: String = "goose-memo.txt") {
         guard let scene, let lead = scene.manager.leadGoose else { return }
         if state != .running { resumeAll() }
-        let pick = UserContentManager.shared.pickNextNotepadMessage()
-        GooseStats.shared.recordPrank("Dragged notepad: \(pick.title)", kind: .note)
+        GooseStats.shared.recordPrank("Dragged memo: \(title)", kind: .note)
         _ = BehaviorScheduler.shared.request(
             priority: .reactive,
-            task: NotepadDeliveryTask(gooseID: lead.id, title: pick.title, body: pick.body, effects: scene),
+            task: NotepadDeliveryTask(gooseID: lead.id, title: title, body: text, effects: scene),
             timeout: 26,
             on: lead.simulation
         )
@@ -242,7 +272,11 @@ final class GooseController: ObservableObject {
 
     func toggleAllPranks() {
         settings.allPranksDisabled.toggle()
-        if settings.allPranksDisabled { scene?.releaseAllControl(closeWindows: true) }
+        if settings.allPranksDisabled {
+            MemeWindowRegistry.shared.closeAll()
+            NotepadWindowRegistry.shared.closeAll()
+            scene?.releaseAllControl(closeWindows: true)
+        }
     }
 
     func clearDesktopMess() {

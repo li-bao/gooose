@@ -39,7 +39,7 @@ final class NapTask: GooseTask {
         let leftPressed = NSEvent.pressedMouseButtons & 1 != 0
         let clickRising = leftPressed && !lastLeftMouseDown
         lastLeftMouseDown = leftPressed
-        if clickRising && CGPoint.distance(NSEvent.mouseLocation, simulation.position) <= Self.wakeClickRadius * simulation.sizeScale {
+        if clickRising && CGPoint.distance(DisplayManager.shared.globalToScene(NSEvent.mouseLocation), simulation.position) <= Self.wakeClickRadius * simulation.sizeScale {
             personality?.recordClick()
             effects?.playSoundEvent(.sleepWake) ?? simulation.onHonk?()
             simulation.setTask(WanderTask())

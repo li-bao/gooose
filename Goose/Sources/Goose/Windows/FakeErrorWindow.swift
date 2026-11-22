@@ -129,8 +129,12 @@ final class FakeErrorWindow {
             let origin = NSPoint(x: screen.maxX - sz.width - 24, y: screen.maxY - sz.height - 24)
             window.setFrameOrigin(origin)
         } else {
-            let x = CGFloat.random(in: max(screen.minX + 40, screen.midX - 220)...max(screen.minX + 41, screen.maxX - sz.width - 40))
-            let y = CGFloat.random(in: max(screen.minY + 40, screen.midY - 140)...max(screen.minY + 41, screen.maxY - sz.height - 40))
+            let minX = max(screen.minX + 40, screen.midX - 220)
+            let maxX = max(minX + 1, screen.maxX - sz.width - 40)
+            let minY = max(screen.minY + 40, screen.midY - 140)
+            let maxY = max(minY + 1, screen.maxY - sz.height - 40)
+            let x = CGFloat.random(in: minX...maxX)
+            let y = CGFloat.random(in: minY...maxY)
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
     }

@@ -52,7 +52,7 @@ final class MouseChaseTask: GooseTask {
             return
         }
 
-        let mouse = NSEvent.mouseLocation
+        let mouse = DisplayManager.shared.globalToScene(NSEvent.mouseLocation)
         let dist = CGPoint.distance(simulation.position, mouse)
 
         if isFleeing {

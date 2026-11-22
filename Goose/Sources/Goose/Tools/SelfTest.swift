@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import SpriteKit
 
 /// Developer-only verification harness (like `--brain-dryrun`). Never runs
 /// unless one of its flags is passed.
@@ -1004,6 +1005,374 @@ enum SelfTest {
         }
         let rssMB = kr == KERN_SUCCESS ? Double(info.resident_size) / (1024.0 * 1024.0) : -1
         check("resident memory reasonable (< 300 MB)", rssMB > 0 && rssMB < 300, String(format: "%.1f MB", rssMB))
+
+        s.restoreDefaults()
+        finish()
+    }
+
+    // MARK: Phase 1 Audit (20x Notepad Edge Drag, Audio Cooldowns, Multi-Screen, Pause/Stop)
+
+    static func phase1Audit() async -> Never {
+        let s = GooseSettings.shared
+        let dm = DisplayManager.shared
+        let engine = SoundEffectEngine.shared
+        s.restoreDefaults()
+        engine.resetVocalCooldowns()
+
+        // 1. Audio defaults & persistence
+        check("default randomHonkFrequency is .low", s.randomHonkFrequency == .low)
+        check("default honkCooldown is 20s", s.honkCooldown == 20.0)
+        s.randomHonkFrequency = .medium
+        s.honkCooldown = 30.0
+        let reloaded = GooseSettings(defaults: .standard)
+        check("audio settings persist across reload", reloaded.randomHonkFrequency == .medium && reloaded.honkCooldown == 30.0)
+        s.restoreDefaults()
+
+        // 2. Global & per-goose honk cooldowns + sleep + mute rules
+        let goose1 = UUID()
+        let goose2 = UUID()
+        let t0 = Date()
+        engine.resetVocalCooldowns()
+        check("initial random vocal allowed for goose1", engine.canPlayVocal(gooseID: goose1, isMajorEvent: false, isSleeping: false, now: t0))
+        engine.recordVocalPlayed(gooseID: goose1, duration: 0.35, now: t0)
+
+        // Immediately after: blocked for both goose1 and goose2 (global cooldown = 20s)
+        let t2 = t0.addingTimeInterval(2.0)
+        check("global cooldown blocks goose2 at +2s", !engine.canPlayVocal(gooseID: goose2, isMajorEvent: false, isSleeping: false, now: t2))
+        check("per-goose cooldown blocks goose1 at +2s", !engine.canPlayVocal(gooseID: goose1, isMajorEvent: false, isSleeping: false, now: t2))
+
+        // After global cooldown (21s): goose2 allowed, goose1 still blocked by per-goose cooldown (28s)
+        let t21 = t0.addingTimeInterval(21.0)
+        check("global cooldown elapsed at +21s allows goose2", engine.canPlayVocal(gooseID: goose2, isMajorEvent: false, isSleeping: false, now: t21))
+        check("per-goose cooldown still blocks goose1 at +21s", !engine.canPlayVocal(gooseID: goose1, isMajorEvent: false, isSleeping: false, now: t21))
+
+        // Sleeping goose cannot emit random honk even when cooldown elapsed
+        let t50 = t0.addingTimeInterval(50.0)
+        check("sleeping goose blocked from random vocal", !engine.canPlayVocal(gooseID: goose1, isMajorEvent: false, isSleeping: true, now: t50))
+
+        // Major event bypasses normal random cooldown, but cannot stack within majorEventMinGap (2.5s)
+        check("major event allowed at +3s", engine.canPlayVocal(gooseID: goose2, isMajorEvent: true, isSleeping: false, now: t0.addingTimeInterval(3.0)))
+        engine.recordVocalPlayed(gooseID: goose2, duration: 0.35, now: t0.addingTimeInterval(3.0))
+        check("major event cannot stack at +4s", !engine.canPlayVocal(gooseID: goose1, isMajorEvent: true, isSleeping: false, now: t0.addingTimeInterval(4.0)))
+
+        // Mute blocks all vocals
+        s.muteGoose = true
+        check("muteGoose blocks all vocals", !engine.canPlayVocal(gooseID: goose1, isMajorEvent: true, isSleeping: false, now: t50))
+        s.muteGoose = false
+        engine.resetVocalCooldowns()
+
+        // 3. 20 consecutive NotepadDeliveryTask edge-drag animations across single & multi-screen layouts
+        final class MockEffects: GooseSceneEffects {
+            var soundEvents: [HonkEvent] = []
+            func attachDraggedWindow(_ window: FloatingWindow, at point: CGPoint, direction: CGFloat) {}
+            func updateDraggedWindowPosition(_ point: CGPoint, direction: CGFloat) {}
+            func detachDraggedWindow() {}
+            func setHeadphones(visible: Bool) {}
+            func setMusicNotes(active: Bool) {}
+            func setDancing(active: Bool) {}
+            func setSleeping(active: Bool) {}
+            func showTaunt(_ text: String, at point: CGPoint) {}
+            func showFakeError(style: FakeErrorWindow.Style, customText: String?) {}
+            func spawnDesktopMess(at point: CGPoint, count: Int) {}
+            func takeVirtualIconForTheft() -> (label: String, position: CGPoint)? { nil }
+            func attachStolenVirtualIcon(label: String, at point: CGPoint) {}
+            func updateStolenVirtualIcon(at point: CGPoint) {}
+            func detachStolenVirtualIcon() {}
+            func playSoundEvent(_ event: HonkEvent, gooseID: UUID?, isSleeping: Bool) {
+                soundEvents.append(event)
+            }
+            func spawnHearts(at point: CGPoint, count: Int) {}
+        }
+
+        let layouts: [[CGRect]] = [
+            [CGRect(x: 0, y: 0, width: 1440, height: 900)],
+            [CGRect(x: 0, y: 0, width: 1920, height: 1080), CGRect(x: 1920, y: 0, width: 2560, height: 1440)],
+            [CGRect(x: -1920, y: 0, width: 1920, height: 1080), CGRect(x: 0, y: 0, width: 1440, height: 900)],
+        ]
+
+        var all20Smooth = true
+        var maxObservedStep: CGFloat = 0
+        var totalHonksAcross20 = 0
+
+        for run in 0..<20 {
+            let layout = layouts[run % layouts.count]
+            dm.setCustomScreensForTesting(layout)
+            let targetFrame = dm.screenFrames[run % dm.screenFrames.count]
+            let sim = GooseSimulation()
+            sim.screenSize = dm.unionFrame.size
+            sim.position = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+            sim.targetPos = sim.position
+
+            let mockEffects = MockEffects()
+            let task = NotepadDeliveryTask(gooseID: goose1, title: "note-\(run).txt", body: "Mock taunt #\(run)", effects: mockEffects)
+            GlobalActionCoordinator.shared.emergencyStopAll()
+            sim.setTask(task)
+
+            var prevOrigin: CGPoint?
+            var sawNonInteractiveDuringDrag = false
+            var steps = 0
+            while !(sim.currentTask is WanderTask) && steps < 1200 {
+                GameTime.stepForTesting(dt: 1.0 / 60.0)
+                sim.tick()
+                if task.currentStage == .draggingIn, let win = task.activeWindow {
+                    if !win.isInteractive {
+                        sawNonInteractiveDuringDrag = true
+                    }
+                    let origin = win.frame.origin
+                    if let prev = prevOrigin {
+                        let jump = hypot(origin.x - prev.x, origin.y - prev.y)
+                        maxObservedStep = max(maxObservedStep, jump)
+                        if jump > 45 {
+                            all20Smooth = false
+                        }
+                    }
+                    prevOrigin = origin
+                }
+                steps += 1
+            }
+            if !(sim.currentTask is WanderTask) || !task.isDeliveryCompleted || !sawNonInteractiveDuringDrag {
+                all20Smooth = false
+            }
+            totalHonksAcross20 += mockEffects.soundEvents.count
+            NotepadWindowRegistry.shared.closeAll()
+        }
+        dm.setCustomScreensForTesting(nil)
+        check("20x NotepadDeliveryTask completed smoothly without warps or stuck tasks", all20Smooth, String(format: "maxStep=%.1fpx", maxObservedStep))
+        check("each NotepadDeliveryTask emitted at most 1 honk event", totalHonksAcross20 <= 20, "totalHonks=\(totalHonksAcross20)")
+
+        // 4. Mid-drag cancellation safety (Pause / Emergency Stop)
+        dm.setCustomScreensForTesting([CGRect(x: 0, y: 0, width: 1440, height: 900)])
+        let cancelSim = GooseSimulation()
+        cancelSim.screenSize = dm.unionFrame.size
+        cancelSim.position = CGPoint(x: 200, y: 450)
+        let cancelTask = NotepadDeliveryTask(gooseID: goose1, title: "cancel.txt", body: "Should close", effects: nil)
+        GlobalActionCoordinator.shared.emergencyStopAll()
+        cancelSim.setTask(cancelTask)
+        var guardSteps = 0
+        while cancelTask.currentStage == .walkingToEdge && guardSteps < 600 {
+            GameTime.stepForTesting(dt: 1.0 / 60.0)
+            cancelSim.tick()
+            guardSteps += 1
+        }
+        check("mid-drag reached draggingIn", cancelTask.currentStage == .draggingIn && NotepadWindowRegistry.shared.count == 1)
+        cancelSim.setTask(WanderTask())
+        check("cancelling mid-drag closes in-flight notepad window", NotepadWindowRegistry.shared.count == 0 && GlobalActionCoordinator.shared.activeWindowHolderCount == 0)
+        dm.setCustomScreensForTesting(nil)
+
+        // 5. GameTime pause/resume freezes monotonic clock
+        GameTime.setPaused(true)
+        let pausedT1 = GameTime.time
+        try? await Task.sleep(for: .milliseconds(50))
+        GameTime.tick()
+        let pausedT2 = GameTime.time
+        GameTime.setPaused(false)
+        check("GameTime freezes while paused", abs(pausedT2 - pausedT1) < 0.0001)
+
+        // 6. GooseArt SpriteKit body pixel verification
+        let skView = SKView(frame: NSRect(x: 0, y: 0, width: 220, height: 220))
+        skView.allowsTransparency = true
+        let skScene = SKScene(size: CGSize(width: 220, height: 220))
+        skScene.backgroundColor = .clear
+        skScene.anchorPoint = .zero
+        skView.presentScene(skScene)
+        let testGoose = GooseInstance(numericID: 1, isLead: true, screenSize: CGSize(width: 220, height: 220))
+        testGoose.simulation.position = CGPoint(x: 110, y: 110)
+        testGoose.art.update(simulation: testGoose.simulation)
+        skScene.addChild(testGoose.container)
+        var whitePx = 0
+        var outlinePx = 0
+        var orangePx = 0
+        if let tex = skView.texture(from: skScene) {
+            let rep = NSBitmapImageRep(cgImage: tex.cgImage())
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide {
+                    if let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.5 {
+                        if c.redComponent > 0.94 && c.greenComponent > 0.94 && c.blueComponent > 0.94 {
+                            whitePx += 1
+                        } else if c.redComponent > 0.70 && c.greenComponent > 0.70 && c.blueComponent > 0.70 {
+                            outlinePx += 1
+                        } else if c.redComponent > 0.80 && c.blueComponent < 0.30 {
+                            orangePx += 1
+                        }
+                    }
+                }
+            }
+        }
+        check("GooseArt renders visible body, outline & beak pixels", whitePx > 500 && outlinePx > 100 && orangePx > 50, "white=\(whitePx) outline=\(outlinePx) orange=\(orangePx)")
+
+        s.restoreDefaults()
+        finish()
+    }
+
+    // MARK: Phase 2 Comprehensive Feature Tests
+
+    static func phase2Features() async -> Never {
+        let s = GooseSettings.shared
+        let dm = DisplayManager.shared
+        s.restoreDefaults()
+
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("goose-phase2-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        // 1. Meme Library: import PNG & GIF, duplicate rejection, category, search, manualOnly, rename, delete, reload
+        let ucm = UserContentManager(rootURL: tempRoot, watchFilesystem: false)
+        let memeStoreURL = tempRoot.appendingPathComponent("Settings/meme_library.json")
+        let memeStore = MemeLibraryStore(contentManager: ucm, storageURL: memeStoreURL)
+
+        let srcDir = tempRoot.appendingPathComponent("ImportSrc", isDirectory: true)
+        try? FileManager.default.createDirectory(at: srcDir, withIntermediateDirectories: true)
+        let pngURL = srcDir.appendingPathComponent("test_meme.png")
+        if let ctx = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 32 * 4,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+           let cg = ctx.makeImage() {
+            let rep = NSBitmapImageRep(cgImage: cg)
+            try? rep.representation(using: .png, properties: [:])?.write(to: pngURL)
+        }
+        let importRes = memeStore.importMemes(from: [pngURL], category: "Gaming")
+        check("meme library imports PNG into Gaming", importRes.imported == 1 && memeStore.items.contains { $0.filename == "test_meme.png" && $0.category == "Gaming" })
+        let dupRes = memeStore.importMemes(from: [pngURL], category: "Gaming")
+        check("meme library rejects duplicate file", dupRes.imported == 0 && !dupRes.errors.isEmpty)
+        check("meme library search finds Gaming meme", memeStore.filteredMemes(search: "test_meme", category: "Gaming").count == 1)
+
+        if var meta = memeStore.items.first(where: { $0.filename == "test_meme.png" }) {
+            meta.manualOnly = true
+            memeStore.updateMetadata(meta)
+            // Only Example.png is eligible for auto-pick now
+            let autoPick = memeStore.pickWeightedMeme(category: "Gaming", includeManualOnly: false)
+            check("manualOnly meme excluded from auto-pick", autoPick == nil)
+            let manualPick = memeStore.pickWeightedMeme(category: "Gaming", includeManualOnly: true)
+            check("manualOnly meme included when manual trigger", manualPick?.1.id == meta.id)
+        }
+        let reloadedMemeStore = MemeLibraryStore(contentManager: ucm, storageURL: memeStoreURL)
+        check("meme library persists metadata across reload", reloadedMemeStore.items.contains { $0.filename == "test_meme.png" && $0.category == "Gaming" && $0.manualOnly })
+
+        // 2. Taunt Library: add, edit, duplicate, disabled category, weighted pick, reload
+        let tauntURL = tempRoot.appendingPathComponent("Settings/taunt_library.json")
+        let tauntStore = TauntLibraryStore(storageURL: tauntURL, seedIfEmpty: true)
+        let added = tauntStore.addTaunt(content: "Custom Phase 2 Taunt!", category: "Gaming", weight: 2.5)
+        check("taunt library adds entry", added != nil)
+        if let added {
+            let dup = tauntStore.duplicateTaunt(added)
+            check("taunt library duplicates entry", dup.id != added.id && dup.content == added.content)
+            tauntStore.deleteTaunt(dup)
+        }
+        tauntStore.toggleCategoryDisabled("Gaming")
+        check("disabled category excluded from random pick", tauntStore.pickWeightedTaunt()?.category != "Gaming")
+        tauntStore.toggleCategoryDisabled("Gaming")
+        let reloadedTaunts = TauntLibraryStore(storageURL: tauntURL, seedIfEmpty: false)
+        check("taunt library persists across reload", reloadedTaunts.entries.contains { $0.content == "Custom Phase 2 Taunt!" })
+
+        // 3. Memo Editor: editable NSTextView, image+caption support, window level never .screenSaver
+        let memo = GooseNotepadWindow(title: "Memo Test", body: "Initial text")
+        check("Memo Editor NSTextView is editable", memo.editorTextView.isEditable && memo.editorTextView.isSelectable)
+        memo.editorTextView.string = "Edited by user"
+        check("Memo Editor text edits persist in view", memo.editorTextView.string == "Edited by user")
+        check("Memo Editor never uses screenSaver level", memo.level != .screenSaver)
+        memo.close()
+
+        if let exampleMeme = ucm.memes.first {
+            let memeMemo = GooseNotepadWindow(title: exampleMeme.filename, body: "Caption!", memeItem: exampleMeme)
+            check("Memo Editor supports MemeItem container", memeMemo.memeItem?.filename == exampleMeme.filename && memeMemo.editorTextView.string == "Caption!")
+            memeMemo.close()
+        }
+
+        // 4. Animation Studio: config persistence + all 6 entry styles across multi-screen
+        let animURL = tempRoot.appendingPathComponent("Settings/animation_studio.json")
+        let animStore = AnimationStudioStore(storageURL: animURL)
+        animStore.settings.entryStyle = .dragFromTop
+        animStore.settings.exitStyle = .slideDown
+        animStore.settings.entryDuration = 2.4
+        let reloadedAnim = AnimationStudioStore(storageURL: animURL)
+        check("Animation Studio persists entry/exit settings", reloadedAnim.settings.entryStyle == .dragFromTop && reloadedAnim.settings.exitStyle == .slideDown && reloadedAnim.settings.entryDuration == 2.4)
+
+        dm.setCustomScreensForTesting([CGRect(x: -1920, y: 0, width: 1920, height: 1080), CGRect(x: 0, y: 0, width: 1440, height: 900)])
+        for style in MemoEntryStyle.allCases {
+            AnimationStudioStore.shared.settings.entryStyle = style
+            let sim = GooseSimulation()
+            sim.screenSize = dm.unionFrame.size
+            sim.position = CGPoint(x: 500, y: 400)
+            let task = NotepadDeliveryTask(gooseID: UUID(), title: "style-\(style.rawValue)", body: "Test", effects: nil)
+            GlobalActionCoordinator.shared.emergencyStopAll()
+            sim.setTask(task)
+            var steps = 0
+            while !(sim.currentTask is WanderTask) && steps < 1200 {
+                GameTime.stepForTesting(dt: 1.0 / 60.0)
+                sim.tick()
+                steps += 1
+            }
+            check("Memo EntryStyle \(style.rawValue) completes smoothly", task.isDeliveryCompleted && sim.currentTask is WanderTask)
+            NotepadWindowRegistry.shared.closeAll()
+        }
+        AnimationStudioStore.shared.resetDefaults()
+        dm.setCustomScreensForTesting(nil)
+
+        // 5. Audio Packs & Quiet Hours: WAV import, pack switching, Quiet Hours filtering
+        let audioURL = tempRoot.appendingPathComponent("Settings/audio_packs.json")
+        let packMgr = AudioPackManager(contentManager: ucm, storageURL: audioURL)
+        let customPack = packMgr.createPack(name: "Test Pack")
+        let wavURL = srcDir.appendingPathComponent("test_honk.wav")
+        // Minimal valid 44-byte WAV header + 16 samples
+        var wavData = Data("RIFF".utf8)
+        let dataBytes: UInt32 = 32
+        var chunkSize = 36 + dataBytes
+        wavData.append(Data(bytes: &chunkSize, count: 4))
+        wavData.append(Data("WAVEfmt ".utf8))
+        var subchunk1: UInt32 = 16; var audioFmt: UInt16 = 1; var numCh: UInt16 = 1
+        var sampleRate: UInt32 = 44100; var byteRate: UInt32 = 88200; var blockAlign: UInt16 = 2; var bits: UInt16 = 16
+        wavData.append(Data(bytes: &subchunk1, count: 4))
+        wavData.append(Data(bytes: &audioFmt, count: 2))
+        wavData.append(Data(bytes: &numCh, count: 2))
+        wavData.append(Data(bytes: &sampleRate, count: 4))
+        wavData.append(Data(bytes: &byteRate, count: 4))
+        wavData.append(Data(bytes: &blockAlign, count: 2))
+        wavData.append(Data(bytes: &bits, count: 2))
+        wavData.append(Data("data".utf8))
+        var dSize = dataBytes
+        wavData.append(Data(bytes: &dSize, count: 4))
+        wavData.append(Data(repeating: 0, count: Int(dataBytes)))
+        try? wavData.write(to: wavURL)
+
+        let audioImport = packMgr.importSounds(from: [wavURL], for: .gooseHonk, intoPackID: customPack.id)
+        check("AudioPackManager imports WAV sound", audioImport.imported == 1 && packMgr.activePack?.sounds.count == 1)
+
+        packMgr.quietHours = QuietHoursConfig(
+            enabled: true,
+            startHour: 0, startMinute: 0,
+            endHour: 23, endMinute: 59,
+            weekdays: [1, 2, 3, 4, 5, 6, 7],
+            mode: .fullMute
+        )
+        check("Quiet Hours active across all weekdays", packMgr.quietHours.isActive())
+        packMgr.quietHours.enabled = false
+
+        // 6. Emotion, Energy & Persistence
+        let stateURL = tempRoot.appendingPathComponent("Settings/goose_states.json")
+        let stateStore = GooseStatePersistence(storageURL: stateURL)
+        stateStore.saveState(numericID: 99, emotion: .mischievous, energy: 72.5, naughty: 0.8, aggressive: 0.3, laziness: 0.2, curious: 0.6, affectionate: 0.5)
+        let reloadedStates = GooseStatePersistence(storageURL: stateURL)
+        let loaded99 = reloadedStates.state(for: 99)
+        check("Goose emotion & energy persist across reload", loaded99?.emotion == .mischievous && loaded99?.energy == 72.5)
+
+        let p = GoosePersonality(numericID: 1, isLead: false)
+        let eBefore = p.energy
+        p.tick(dt: 10.0, isSleeping: false, isActiveTask: true)
+        check("active task consumes goose energy", p.energy < eBefore && p.energy >= 0)
+        let eLow = p.energy
+        p.tick(dt: 10.0, isSleeping: true, isActiveTask: false)
+        check("sleeping recovers goose energy", p.energy > eLow && p.energy <= 100)
+
+        // 7. Prank Presets: Peaceful / Normal / Mischievous / Chaos + Custom Preset
+        let presetURL = tempRoot.appendingPathComponent("Settings/prank_presets.json")
+        let presetMgr = PrankPresetManager(storageURL: presetURL)
+        check("4 built-in presets present", presetMgr.builtInPresets.count == 4)
+        if let chaos = presetMgr.builtInPresets.first(where: { $0.builtInKey == BuiltInPresetID.chaos.rawValue }) {
+            presetMgr.applyPreset(chaos)
+            check("Chaos preset preserves safe honkCooldown floor >= 8s", s.honkCooldown >= 8.0)
+        }
+        let customPreset = presetMgr.createCustomPreset(name: "My Phase 2 Preset")
+        let reloadedPresets = PrankPresetManager(storageURL: presetURL)
+        check("custom prank preset persists across reload", reloadedPresets.customPresets.contains { $0.id == customPreset.id && $0.name == "My Phase 2 Preset" })
 
         s.restoreDefaults()
         finish()

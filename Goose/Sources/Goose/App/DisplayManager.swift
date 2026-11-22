@@ -12,6 +12,8 @@ final class DisplayManager {
     private(set) var unionFrame: CGRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
     /// Each physical screen's frame translated into scene-local coordinates (relative to `unionFrame.origin`).
     private(set) var screenFrames: [CGRect] = [CGRect(x: 0, y: 0, width: 1440, height: 900)]
+    /// Each physical screen's `visibleFrame` (excluding Dock/menu bar) in scene-local coordinates.
+    private(set) var visibleScreenFrames: [CGRect] = [CGRect(x: 0, y: 0, width: 1440, height: 900)]
     private var primaryScreenHeight: CGFloat = 900
     private var customTestScreens: [CGRect]?
     private var screenObserver: NSObjectProtocol?
@@ -34,18 +36,22 @@ final class DisplayManager {
 
     func refreshScreens() {
         let globalFrames: [CGRect]
+        let globalVisibleFrames: [CGRect]
         if let testScreens = customTestScreens, !testScreens.isEmpty {
             globalFrames = testScreens
-            primaryScreenHeight = testScreens[0].height
+            globalVisibleFrames = testScreens
+            primaryScreenHeight = testScreens[0].maxY
         } else {
             let screens = NSScreen.screens
             guard !screens.isEmpty else {
                 unionFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
                 screenFrames = [unionFrame]
+                visibleScreenFrames = [unionFrame]
                 primaryScreenHeight = 900
                 return
             }
             globalFrames = screens.map(\.frame)
+            globalVisibleFrames = screens.map(\.visibleFrame)
             primaryScreenHeight = screens[0].frame.height
         }
 
@@ -59,6 +65,24 @@ final class DisplayManager {
                 height: frame.height
             )
         }
+        visibleScreenFrames = globalVisibleFrames.map { frame in
+            CGRect(
+                x: frame.minX - union.minX,
+                y: frame.minY - union.minY,
+                width: frame.width,
+                height: frame.height
+            )
+        }
+    }
+
+    func visibleFrame(forScreenIndex idx: Int, fallbackSize: CGSize) -> CGRect {
+        if visibleScreenFrames.indices.contains(idx) {
+            return visibleScreenFrames[idx]
+        }
+        if screenFrames.indices.contains(idx) {
+            return screenFrames[idx]
+        }
+        return CGRect(origin: .zero, size: fallbackSize)
     }
 
     func setCustomScreensForTesting(_ globalFrames: [CGRect]?) {

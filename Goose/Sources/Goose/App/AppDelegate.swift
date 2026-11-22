@@ -38,7 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        escMonitor?.stop()
         GlobalHotkeyManager.shared.stop()
+        SoundEffectEngine.shared.stopAll()
+        MemeWindowRegistry.shared.closeAll()
+        NotepadWindowRegistry.shared.closeAll()
+        if let scene = overlayWindow?.gooseScene {
+            for g in scene.manager.geese {
+                g.personality.persistState()
+            }
+            scene.releaseAllControl(closeWindows: true)
+            scene.stopAudio()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -158,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
 
     private func setUpOverlayWindow() {
         let window = OverlayWindow()
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         overlayWindow = window
         controller.overlay = window
     }

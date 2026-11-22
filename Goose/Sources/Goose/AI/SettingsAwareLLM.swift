@@ -24,9 +24,10 @@ final class SettingsAwareLLM: LLMProvider {
         let s = GooseSettings.shared
         guard s.aiEnabled else { return [] }
         let externalAllowed = s.externalAIOptIn && openAI.status.isReady
+        let appleReady: [LLMProvider] = apple.status.isReady ? [apple] : []
         switch s.aiProvider {
-        case .auto: return (externalAllowed ? [openAI] : []) + [apple]
-        case .appleOnDevice: return [apple]
+        case .auto: return (externalAllowed ? [openAI] : []) + appleReady
+        case .appleOnDevice: return appleReady
         case .openAI: return externalAllowed ? [openAI] : []
         }
     }

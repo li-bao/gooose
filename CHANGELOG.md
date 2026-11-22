@@ -1,5 +1,24 @@
 # Changelog — Super Goose Desktop
 
+## [2.2.0] — 2026-11-22
+
+### Phase 1–3 Stability, Edge-Drag Animation, Audio Overhaul & Customization Suite
+- **Phase 1 Audit & Stability Fixes**:
+  - Eliminated 60fps cross-process Accessibility IPC storm in `FullscreenMonitor` and fixed `ControlCenterView` timer leaks.
+  - Added proper async `Task` cancellation cleanup in `AgentDirector`, `HonkTicker`, and `ChillingTicker`.
+  - Fixed multi-display coordinate mismatches (`DisplayManager`, `OverlayWindow`, `GooseScene`) and `ClosedRange` crash guards.
+- **Smooth Edge-Drag Animation (`NotepadDeliveryTask`, `MemeDeliveryTask`)**:
+  - Rewrote delivery flows so the goose physically pulls notes and memes from outside `NSScreen.visibleFrame` along an eased 1.5–3.0s Bezier path with subtle bobbing, rotation, landing settle, and interaction gating until placement completes.
+- **Audio Cooldown Overhaul (`GooseManager`, `SoundEffectEngine`, `HonkTicker`)**:
+  - Fixed footstep sound playing duck quack on every step (switched to `tinyFootstep` / `runningFootstep`).
+  - Added 20s global and 20–40s per-goose vocal cooldowns, `RandomHonkFrequency` (default `.low`), sleep suppression, and instant stop on Mute / Pause / Quit.
+- **Phase 2 Customization Suite**:
+  - **Personal Meme Library (`MemeLibraryStore`)**: Import PNG, JPG, JPEG, WEBP, and animated GIFs via Finder or drag-and-drop, with categories, weights, usage tracking, tags, and search.
+  - **Goose Memo Editor (`GooseMemoEditorWindow`)**: Editable, resizable native note window supporting text and memes with 6 configurable exit animations.
+  - **Taunt Library, Animation Studio, Audio Packs, Prank Presets & Persistence**: Added `TauntLibraryStore`, `AnimationStudioConfig`, `AudioPackManager`, `PrankPresetManager`, `GooseStatePersistence`, and `Phase2SettingsViews` (10-tab Settings Center).
+- **App Icon & Goose Sprite Rendering (`GooseArt`, `build-app.sh`)**:
+  - Added `AppIcon.icns` bundling to `scripts/build-app.sh` and rewrote `GooseArt.swift` to render the goose body, neck, head, beak, eyes, and feet into a crisp 2× Retina `CGContext` → `SKSpriteNode`.
+
 ## [2.1.0] — 2026-11-22
 
 ### Ultimate Desktop Goose Experience

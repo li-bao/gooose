@@ -25,6 +25,7 @@ final class GlobalHotkeyManager {
     }
 
     func stop() {
+        GooseSettings.shared.onHotkeysChanged = nil
         unregisterAll()
         if let handlerRef {
             RemoveEventHandler(handlerRef)
@@ -75,7 +76,7 @@ final class GlobalHotkeyManager {
         case .hideAll:
             controller.hideAll()
         case .showAll:
-            if controller.state == .hidden || controller.state == .paused {
+            if controller.state == .hidden || controller.state == .paused || controller.state == .stopped {
                 controller.resumeAll()
             }
         case .spawnGoose:

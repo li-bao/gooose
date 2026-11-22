@@ -49,12 +49,22 @@ final class GooseManager: ObservableObject {
             instance.simulation.lFootPos = instance.simulation.footHome(rightFoot: false)
             instance.simulation.rFootPos = instance.simulation.footHome(rightFoot: true)
         }
-        instance.simulation.onFootLand = { [weak scene] in scene?.playSoundEvent(.pat) }
-        instance.simulation.onHonk = { [weak scene] in scene?.playSoundEvent(.random) }
-        instance.simulation.onBite = { [weak scene] in scene?.playSoundEvent(.prank) }
+        let gid = instance.id
+        instance.simulation.onFootLand = { [weak sim = instance.simulation] in
+            guard let sim else { return }
+            let moveSound: MovementSound = sim.speedTier == .walk ? .tinyFootstep : .runningFootstep
+            _ = SoundEffectEngine.shared.playMovement(moveSound, category: .footsteps, priority: .low, cooldown: 0.22)
+        }
+        instance.simulation.onHonk = { [weak scene, weak sim = instance.simulation] in
+            let sleeping = (sim?.currentTask is NapTask) || (sim?.currentTask is DeepSleepTask)
+            scene?.playSoundEvent(.random, gooseID: gid, isSleeping: sleeping)
+        }
+        instance.simulation.onBite = {
+            _ = SoundEffectEngine.shared.playMovement(.beakPeck, category: .footsteps, priority: .low, cooldown: 0.35)
+        }
 
-        instance.marksNode.zPosition = assignLead ? 9 : 8
-        instance.container.zPosition = assignLead ? 10 : 9
+        instance.marksNode.zPosition = 5 + CGFloat(numID) * 0.1
+        instance.container.zPosition = CGFloat(10 + numID * 20)
         scene.addChild(instance.marksNode)
         scene.addChild(instance.container)
 
@@ -83,6 +93,7 @@ final class GooseManager: ObservableObject {
         }
         guard let idx = index else { return false }
         let removed = geese.remove(at: idx)
+        SoundEffectEngine.shared.clearGooseState(for: removed.id)
         removed.teardown()
         return true
     }
@@ -91,6 +102,7 @@ final class GooseManager: ObservableObject {
         let copy = geese
         geese.removeAll()
         for g in copy {
+            SoundEffectEngine.shared.clearGooseState(for: g.id)
             g.teardown()
         }
         nextNumericID = 1
@@ -126,6 +138,7 @@ final class GooseManager: ObservableObject {
     /// Single unified per-frame update driving every goose, timeouts,
     /// personality evolution, companion decisions, and peer interactions.
     func tickAll(dt: TimeInterval, currentTime: TimeInterval, scene: GooseScene) {
+        GameTime.tick(dt: dt)
         enforceCap()
         GlobalActionCoordinator.shared.tickTimeouts()
 
@@ -139,18 +152,24 @@ final class GooseManager: ObservableObject {
             let isActive = !(goose.simulation.currentTask is WanderTask)
             goose.personality.tick(dt: dt, isSleeping: isSleeping, isActiveTask: isActive)
 
-            goose.simulation.speedMultiplier = CGFloat(settings.movementSpeed)
+            goose.simulation.speedMultiplier = CGFloat(settings.movementSpeed * goose.personality.speedEmotionMultiplier)
             goose.simulation.animationMultiplier = CGFloat(settings.animationSpeed)
             goose.simulation.sizeScale = CGFloat(settings.gooseSize)
 
+            var waitingForLock = false
             if !goose.isLead {
                 thinkCompanion(goose, controller: controller, settings: settings, scene: scene)
+                if case .waitingForLock = goose.aiState {
+                    waitingForLock = true
+                }
             }
 
             BehaviorScheduler.shared.tick(simulation: goose.simulation)
             goose.simulation.tick()
             goose.art.update(simulation: goose.simulation)
-            goose.refreshAIState(from: goose.simulation.currentTask)
+            if !waitingForLock {
+                goose.refreshAIState(from: goose.simulation.currentTask)
+            }
 
             let s = CGFloat(settings.gooseSize)
             let bob = goose.isLead ? scene.currentDanceBob : .zero

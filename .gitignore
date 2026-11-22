@@ -1,6 +1,7 @@
 # macOS & Xcode
 .DS_Store
 *.xcuserstate
+*.xcworkspace/xcuserdata/
 *.dSYM/
 *.xcarchive/
 DerivedData/
@@ -8,9 +9,13 @@ build/
 
 # Swift / SPM
 .build/
+.swiftpm/
 Goose/.build/
 Goose/.swiftpm/
 Goose/Package.resolved
+
+# Node / Web
+node_modules/
 
 # Distribution artifacts (use GitHub Releases for binaries)
 dist/
@@ -23,6 +28,10 @@ dist/*.app
 !.env.example
 *.pem
 *.p12
+*.p8
+*.key
+*.cer
+*.keystore
 *.mobileprovision
 openai-key
 

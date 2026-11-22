@@ -5,7 +5,7 @@ struct ControlCenterView: View {
     @ObservedObject private var controller = GooseController.shared
     @ObservedObject private var settings = GooseSettings.shared
     @ObservedObject private var stats = GooseStats.shared
-    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+    @State private var isVisible = false
 
     private var stateInfo: (text: String, color: Color, symbol: String) {
         switch controller.state {
@@ -32,8 +32,21 @@ struct ControlCenterView: View {
             .animation(.smooth(duration: 0.25), value: controller.state)
         }
         .frame(minWidth: 560, minHeight: 640)
-        .onReceive(timer) { _ in controller.refresh() }
-        .onAppear { controller.refresh() }
+        .onAppear {
+            isVisible = true
+            controller.refresh()
+        }
+        .onDisappear {
+            isVisible = false
+        }
+        .task(id: isVisible) {
+            guard isVisible else { return }
+            while !Task.isCancelled && isVisible {
+                try? await Task.sleep(for: .milliseconds(500))
+                if Task.isCancelled || !isVisible { break }
+                controller.refresh()
+            }
+        }
     }
 
     private var header: some View {

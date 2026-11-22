@@ -5,11 +5,12 @@ import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
-    case behavior = "Goose Behavior"
-    case audio = "Audio"
-    case memes = "Memes"
-    case notepadMessages = "Notepad Messages"
-    case personalityPacks = "Personality Packs"
+    case memeLibrary = "Meme Library"
+    case tauntLibrary = "Taunt Library"
+    case animationStudio = "Animation Studio"
+    case audioPacks = "Audio Packs"
+    case emotionBehavior = "Emotion & Behavior"
+    case prankPresets = "Prank Presets"
     case screenObservation = "Screen Observation"
     case permissions = "Permissions"
     case advanced = "Advanced Settings"
@@ -19,11 +20,12 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .overview:          return "house"
-        case .behavior:          return "bird"
-        case .audio:             return "speaker.wave.2"
-        case .memes:             return "photo.on.rectangle.angled"
-        case .notepadMessages:   return "note.text"
-        case .personalityPacks:  return "text.bubble"
+        case .memeLibrary:       return "photo.on.rectangle.angled"
+        case .tauntLibrary:      return "note.text"
+        case .animationStudio:   return "wand.and.stars"
+        case .audioPacks:        return "speaker.wave.2"
+        case .emotionBehavior:   return "bird"
+        case .prankPresets:      return "slider.horizontal.3"
         case .screenObservation: return "eye"
         case .permissions:       return "hand.raised"
         case .advanced:          return "gearshape.2"
@@ -63,11 +65,12 @@ struct SettingsView: View {
     private func page(for tab: SettingsTab) -> some View {
         switch tab {
         case .overview:          OverviewPage()
-        case .behavior:          GooseBehaviorPage()
-        case .audio:             AudioPage()
-        case .memes:             MemesPage()
-        case .notepadMessages:   NotepadMessagesPage()
-        case .personalityPacks:  PersonalityPacksPage()
+        case .memeLibrary:       MemeLibraryPage()
+        case .tauntLibrary:      TauntLibraryPage()
+        case .animationStudio:   AnimationStudioPage()
+        case .audioPacks:        AudioPacksPage()
+        case .emotionBehavior:   GooseBehaviorPage()
+        case .prankPresets:      PrankPresetsPage()
         case .screenObservation: ScreenObservationPage()
         case .permissions:       PermissionsSettingsPage()
         case .advanced:          AdvancedSettingsPage()
@@ -140,6 +143,7 @@ private struct GooseBehaviorPage: View {
     ]
 
     var body: some View {
+        EmotionEnergyStatusCard()
         SettingsCard(L("Behavior Switches")) {
             ToggleRow(title: L("Enable Goose Wandering"), isOn: $settings.wanderingEnabled)
             RowDivider()
@@ -155,7 +159,7 @@ private struct GooseBehaviorPage: View {
             RowDivider()
             ToggleRow(title: L("Quiet Mode"), subtitle: L("Lowers audio volume and reduces intrusive behavior."), isOn: $settings.quietMode)
             RowDivider()
-            ToggleRow(title: L("Nighttime Quiet Hours"), subtitle: L("Silences ambient sounds between \(settings.quietStartHour):00 and \(settings.quietEndHour):00."), isOn: $settings.nighttimeQuietHours)
+            ToggleRow(title: L("Nighttime Quiet Hours"), subtitle: L("Silences ambient sounds during quiet hours.") + " (\(settings.quietStartHour):00–\(settings.quietEndHour):00)", isOn: $settings.nighttimeQuietHours)
         }
         SettingsCard(L("Motion & Flock")) {
             SliderRow(title: L("Movement Speed"), value: $settings.movementSpeed, range: 0.25...3, step: 0.05, format: Fmt.multiplier)
@@ -205,11 +209,38 @@ private struct AudioPage: View {
         SettingsCard(L("Master Audio")) {
             ToggleRow(title: L("Master Sound"), isOn: $settings.masterSoundEnabled)
             RowDivider()
-            ToggleRow(title: L("Mute All Goose & Duck Audio"), isOn: $settings.muteGoose)
+            ToggleRow(title: L("Mute Goose"), isOn: $settings.muteGoose)
             RowDivider()
             SliderRow(title: L("Master Volume"), value: $settings.masterVolume, range: 0...1, step: 0.05, format: Fmt.percent)
             RowDivider()
             SliderRow(title: L("Honk Volume"), value: $settings.honkVolume, range: 0...1, step: 0.05, format: Fmt.percent)
+            RowDivider()
+            ToggleRow(title: L("Sound Effects"), isOn: $settings.soundEffects)
+        }
+        SettingsCard(L("Honk Behavior & Cooldowns")) {
+            ToggleRow(title: L("Enable Honking"), isOn: Binding(
+                get: { settings.isEnabled(.honking) && settings.gooseSoundsEnabled },
+                set: { on in
+                    settings.setEnabled(.honking, on)
+                    settings.gooseSoundsEnabled = on
+                }
+            ))
+            RowDivider()
+            ToggleRow(title: L("Random Honking"), isOn: $settings.randomHonking)
+            RowDivider()
+            SettingRow(title: L("Random Honk Frequency")) {
+                Picker("", selection: $settings.randomHonkFrequency) {
+                    Text(L("Off")).tag(RandomHonkFrequency.off)
+                    Text(L("Low")).tag(RandomHonkFrequency.low)
+                    Text(L("Medium")).tag(RandomHonkFrequency.medium)
+                    Text(L("High")).tag(RandomHonkFrequency.high)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 240)
+            }
+            RowDivider()
+            SliderRow(title: L("Honk Cooldown"), value: $settings.honkCooldown, range: 5...90, step: 5, format: Fmt.seconds)
         }
         SettingsCard(L("Sound Categories")) {
             ToggleRow(title: L("Duck Sounds"), isOn: $settings.duckSoundsEnabled)
@@ -358,8 +389,6 @@ private struct AdvancedSettingsPage: View {
     @ObservedObject private var settings = GooseSettings.shared
     @ObservedObject private var controller = GooseController.shared
     @State private var confirmRestore = false
-    @State private var updateMessage: String?
-    @State private var checking = false
 
     private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
     private var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0" }
@@ -419,6 +448,8 @@ private struct AdvancedSettingsPage: View {
             ToggleRow(title: L("AI Prank Text Generation"), isOn: $settings.aiPrankText)
         }
         SettingsCard(L("Fullscreen Awareness & Hotkeys")) {
+            ToggleRow(title: L("Memo Editor Always on Top"), isOn: $settings.memoAlwaysOnTop)
+            RowDivider()
             ToggleRow(title: L("Fullscreen Awareness"), isOn: $settings.fullscreenAwareness)
             RowDivider()
             SettingRow(title: L("Exception Apps")) {

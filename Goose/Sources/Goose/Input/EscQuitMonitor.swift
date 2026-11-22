@@ -18,9 +18,16 @@ final class EscQuitMonitor {
         self.onQuit = onQuit
     }
 
+    isolated deinit {
+        timer?.invalidate()
+    }
+
     func start() {
+        stop()
         let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            MainActor.assumeIsolated {
+                self?.tick()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -32,14 +39,17 @@ final class EscQuitMonitor {
     }
 
     private func tick() {
+        let prev = holdProgress
         let pressed = CGEventSource.keyState(.combinedSessionState, key: Self.escapeKeyCode)
         if pressed {
             holdProgress = min(1.0, holdProgress + CGFloat(Self.pollInterval / Self.holdDurationToQuit))
-        } else {
+        } else if holdProgress > 0 {
             holdProgress = max(0, holdProgress - Self.decayPerTick)
         }
 
-        window?.gooseScene.setEvictProgress(holdProgress)
+        if holdProgress != prev {
+            window?.gooseScene.setEvictProgress(holdProgress)
+        }
 
         if holdProgress >= 1.0 {
             stop()

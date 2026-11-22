@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_DIR="$ROOT_DIR/Goose"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/Super Goose Desktop.app"
-VERSION="${VERSION:-2.0.1}"
-BUILD_NUMBER="${BUILD_NUMBER:-3}"
+VERSION="${VERSION:-2.2.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-5}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 echo "==> Building Release ARM64 binary..."
@@ -36,6 +36,10 @@ fi
 
 if [[ -d "$PKG_DIR/Sources/Goose/Resources/Sprites/Goose" ]]; then
   cp -R "$PKG_DIR/Sources/Goose/Resources/Sprites/Goose" "$APP_BUNDLE/Contents/Resources/Sprites/Goose"
+fi
+
+if [[ -f "$PKG_DIR/Sources/Goose/Resources/AppIcon.icns" ]]; then
+  cp "$PKG_DIR/Sources/Goose/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 fi
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST

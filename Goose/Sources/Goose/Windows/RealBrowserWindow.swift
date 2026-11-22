@@ -57,13 +57,13 @@ final class RealBrowserWindow: NSWindow {
     func slideIn() async {
         guard let screen = NSScreen.main?.frame else { return }
         let target = NSRect(
-            x: (screen.width - Self.size.width) / 2,
-            y: (screen.height - Self.size.height) / 2,
+            x: screen.minX + (screen.width - Self.size.width) / 2,
+            y: screen.minY + (screen.height - Self.size.height) / 2,
             width: Self.size.width,
             height: Self.size.height
         )
         let start = NSRect(
-            x: screen.width + 50,
+            x: screen.maxX + 50,
             y: target.origin.y,
             width: Self.size.width,
             height: Self.size.height

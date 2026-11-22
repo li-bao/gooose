@@ -203,6 +203,7 @@ final class GooseScene: SKScene, GooseSceneEffects {
                 activity: Self.describe(g.simulation.currentTask),
                 isLead: g.isLead,
                 personalitySummary: g.personality.summaryText,
+                emotion: g.personality.emotion,
                 energyPercent: g.energyPercent,
                 holdingLock: lockLabel
             )
@@ -223,6 +224,8 @@ final class GooseScene: SKScene, GooseSceneEffects {
         case is NapTask: return "Napping"
         case is DeepSleepTask: return "Deep sleep"
         case is DragWindowTask: return "Delivering a window"
+        case is NotepadDeliveryTask: return "Delivering a notepad"
+        case is MemeDeliveryTask: return "Delivering a meme"
         case is BrowseTask: return "Browsing the web"
         case is ChillingTask: return "Headbanging with headphones"
         case .none: return "Idle"
@@ -330,38 +333,48 @@ final class GooseScene: SKScene, GooseSceneEffects {
         evictBar.position = CGPoint(x: 16, y: max(20, size.height - 28))
     }
 
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        evictBar.position = CGPoint(x: 16, y: max(20, size.height - 28))
+    }
+
     // MARK: - Frame loop
 
     override func update(_ currentTime: TimeInterval) {
         guard !controller.simulationFrozen else {
+            GameTime.setPaused(true)
             lastTickTime = currentTime
             return
         }
+        GameTime.setPaused(false)
 
         let dt = lastTickTime > 0 ? min(0.1, max(0, currentTime - lastTickTime)) : (1.0 / 60.0)
         lastTickTime = currentTime
 
         controller.overlay?.setPreferredFPS(FullscreenMonitor.shared.recommendedFPS)
         pollMouseInteraction()
+        updateDanceBob(currentTime: currentTime)
         manager.tickAll(dt: dt, currentTime: currentTime, scene: self)
 
         if let lead = manager.leadGoose {
-            var rig = GooseRig()
-            rig.update(
-                position: lead.simulation.position,
-                directionDegrees: lead.simulation.direction,
-                neckLerp: lead.simulation.neckLerpPercent
-            )
-            headphones.update(headPoint: rig.neckHeadPoint, perpendicular: rig.perpendicular)
-            updateDanceBob(currentTime: currentTime)
-
-            if isSleepingVisual {
-                let k = CGFloat(settings.gooseSize)
-                let pos = lead.simulation.position
-                sleepLabel.position = CGPoint(
-                    x: pos.x + (rig.neckHeadPoint.x - pos.x) * k + 14,
-                    y: pos.y + (rig.neckHeadPoint.y - pos.y) * k + 24 * k + CGFloat(sin(currentTime * 2.2) * 3)
+            if !headphones.isHidden || isSleepingVisual {
+                var rig = GooseRig()
+                rig.update(
+                    position: lead.simulation.position,
+                    directionDegrees: lead.simulation.direction,
+                    neckLerp: lead.simulation.neckLerpPercent
                 )
+                if !headphones.isHidden {
+                    headphones.update(headPoint: rig.neckHeadPoint, perpendicular: rig.perpendicular)
+                }
+                if isSleepingVisual {
+                    let k = CGFloat(settings.gooseSize)
+                    let pos = lead.simulation.position
+                    sleepLabel.position = CGPoint(
+                        x: pos.x + (rig.neckHeadPoint.x - pos.x) * k + 14,
+                        y: pos.y + (rig.neckHeadPoint.y - pos.y) * k + 24 * k + CGFloat(sin(currentTime * 2.2) * 3)
+                    )
+                }
             }
         }
     }
@@ -379,6 +392,14 @@ final class GooseScene: SKScene, GooseSceneEffects {
 
     override func willMove(from view: SKView) {
         stopAgents()
+        musicNotes.stop()
+        tauntHideWork?.cancel()
+        tauntHideWork = nil
+        headphones.removeAllActions()
+        closeGooseWindows()
+        closeFakeErrorWindows()
+        detachStolenVirtualIcon()
+        audio.stopAll()
         manager.removeAllGeese()
         trackedGooseWindows.removeAll()
         if let observer = closeObserver {
@@ -441,7 +462,8 @@ final class GooseScene: SKScene, GooseSceneEffects {
         }
         currentDraggedWindow = window
         window.window.alphaValue = 0
-        window.setCenter(windowCenter(beak: point, direction: direction, windowSize: window.size))
+        let globalCenter = DisplayManager.shared.sceneToGlobal(windowCenter(beak: point, direction: direction, windowSize: window.size))
+        window.setCenter(globalCenter)
         window.show()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
@@ -452,7 +474,8 @@ final class GooseScene: SKScene, GooseSceneEffects {
 
     func updateDraggedWindowPosition(_ point: CGPoint, direction: CGFloat) {
         guard let window = currentDraggedWindow else { return }
-        window.setCenter(windowCenter(beak: point, direction: direction, windowSize: window.size))
+        let globalCenter = DisplayManager.shared.sceneToGlobal(windowCenter(beak: point, direction: direction, windowSize: window.size))
+        window.setCenter(globalCenter)
     }
 
     func setHeadphones(visible: Bool) {
@@ -499,6 +522,7 @@ final class GooseScene: SKScene, GooseSceneEffects {
         guard !trimmed.isEmpty else { return }
 
         tauntHideWork?.cancel()
+        tauntNode.removeAllActions()
         tauntLabel.text = trimmed
         let width = max(90, CGFloat(trimmed.count) * 7.2 + 20)
         tauntBackground.path = CGPath(roundedRect: CGRect(x: -width / 2, y: -13, width: width, height: 26), cornerWidth: 8, cornerHeight: 8, transform: nil)
@@ -556,8 +580,12 @@ final class GooseScene: SKScene, GooseSceneEffects {
         stolenIconNode = nil
     }
 
-    func playSoundEvent(_ event: HonkEvent) {
-        audio.playEvent(event)
+    func playSoundEvent(_ event: HonkEvent, gooseID: UUID?, isSleeping: Bool) {
+        audio.playEvent(event, gooseID: gooseID, isSleeping: isSleeping)
+    }
+
+    func stopAudio() {
+        audio.stopAll()
     }
 
     func spawnHearts(at point: CGPoint, count: Int) {

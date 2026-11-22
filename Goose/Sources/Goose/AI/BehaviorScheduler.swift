@@ -68,9 +68,12 @@ final class BehaviorScheduler {
             }
         }
 
-        // Do not let a lower-priority request preempt a running higher-priority task.
+        // Do not let an equal- or lower-priority proactive request preempt a running task.
         let key = ObjectIdentifier(simulation)
         if let active = slots[key], !(simulation.currentTask is WanderTask) {
+            if priority < .reactive && priority <= active.priority {
+                return false
+            }
             if priority < active.priority {
                 return false
             }
@@ -99,8 +102,12 @@ final class BehaviorScheduler {
                 return false
             }
         }
-        if (task is WindowPrankTask || task is DragWindowTask), let holder = GlobalActionCoordinator.shared.windowHolderID {
-            let candidateID = (task as? WindowPrankTask)?.gooseID ?? (task as? DragWindowTask)?.gooseID
+        if (task is WindowPrankTask || task is DragWindowTask || task is NotepadDeliveryTask || task is MemeDeliveryTask),
+           let holder = GlobalActionCoordinator.shared.windowHolderID {
+            let candidateID = (task as? WindowPrankTask)?.gooseID
+                ?? (task as? DragWindowTask)?.gooseID
+                ?? (task as? NotepadDeliveryTask)?.gooseID
+                ?? (task as? MemeDeliveryTask)?.gooseID
             if holder != candidateID && priority < .reactive {
                 return false
             }

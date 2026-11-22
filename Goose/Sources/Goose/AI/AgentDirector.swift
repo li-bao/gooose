@@ -36,27 +36,28 @@ final class AgentDirector {
         self.effects = effects
     }
 
+    deinit {
+        loopTask?.cancel()
+    }
+
     func start() {
         FileHandle.standardError.write(Data("AgentDirector: brain ready, starting loop\n".utf8))
         loopTask?.cancel()
         loopTask = Task { [weak self] in
             try? await Task.sleep(for: Self.firstTickDelay)
-            await self?.loop()
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.tick()
+                let scale = max(0.2, FullscreenMonitor.shared.activityMultiplier)
+                let seconds = Double.random(in: Tuning.agentLoopRange) / max(0.1, GooseSettings.shared.activityFrequency * scale)
+                try? await Task.sleep(for: .seconds(seconds))
+            }
         }
     }
 
     func stop() {
         loopTask?.cancel()
         loopTask = nil
-    }
-
-    private func loop() async {
-        while !Task.isCancelled {
-            await tick()
-            let scale = max(0.2, FullscreenMonitor.shared.activityMultiplier)
-            let seconds = Double.random(in: Tuning.agentLoopRange) / max(0.1, GooseSettings.shared.activityFrequency * scale)
-            try? await Task.sleep(for: .seconds(seconds))
-        }
     }
 
     private func tick() async {
@@ -70,67 +71,87 @@ final class AgentDirector {
             return
         }
         let snapshot = await perception.captureSnapshot() ?? ContextSnapshot.empty()
+        guard !Task.isCancelled else { return }
         guard let decision = await brain.decide(snapshot: snapshot, recentActions: recentActions, personality: goosePersonality) else { return }
-        execute(decision: decision)
-        recentActions.append(decision.action.rawValue)
-        if recentActions.count > Self.recentActionsCap {
-            recentActions.removeFirst()
+        guard !Task.isCancelled else { return }
+        if execute(decision: decision) {
+            recentActions.append(decision.action.rawValue)
+            if recentActions.count > Self.recentActionsCap {
+                recentActions.removeFirst()
+            }
         }
     }
 
-    private func execute(decision: GooseDecision) {
-        guard let simulation, let effects else { return }
+    @discardableResult
+    private func execute(decision: GooseDecision) -> Bool {
+        guard let simulation, let effects else { return false }
         let settings = GooseSettings.shared
         // State may have changed while the brain was thinking.
-        guard GooseController.shared.allowsProactive else { return }
+        guard GooseController.shared.allowsProactive else { return false }
 
         switch decision.action {
         case .wander:
-            return
+            return true
         case .nap:
-            scheduler.request(priority: .ambient, task: NapTask(effects: effects, personality: goosePersonality), behavior: .sleepMode, timeout: 12, on: simulation)
+            return scheduler.request(priority: .ambient, task: NapTask(effects: effects, personality: goosePersonality), behavior: .sleepMode, timeout: 12, on: simulation)
         case .deepSleep:
-            scheduler.request(priority: .ambient, task: DeepSleepTask(effects: effects, personality: goosePersonality), behavior: .sleepMode, timeout: 95, on: simulation)
+            return scheduler.request(priority: .ambient, task: DeepSleepTask(effects: effects, personality: goosePersonality), behavior: .sleepMode, timeout: 95, on: simulation)
         case .note:
             guard settings.notepadDeliveriesEnabled,
-                  scheduler.allowsTaskStart(priority: .prank, behavior: .stickyNotes, on: simulation) else { return }
+                  scheduler.allowsTaskStart(priority: .prank, behavior: .stickyNotes, on: simulation) else { return false }
+            let tauntPick = TauntLibraryStore.shared.pickWeightedTaunt()
             let customPick = UserContentManager.shared.pickNextNotepadMessage()
-            let title = decision.noteTitle.isEmpty ? customPick.title : decision.noteTitle
-            let body = settings.aiEnabled && settings.aiPrankText && !decision.noteBody.isEmpty
-                ? decision.noteBody
-                : customPick.body
-            if settings.aiEnabled {
-                NotificationManager.shared.post(
-                    category: .aiMessage,
-                    title: "Goose wrote \(title)",
-                    body: body.replacingOccurrences(of: "\n", with: " ")
-                )
+            let title: String
+            let body: String
+            if settings.aiEnabled && settings.aiPrankText && !decision.noteBody.isEmpty {
+                title = decision.noteTitle.isEmpty ? customPick.title : decision.noteTitle
+                body = decision.noteBody
+            } else if let tauntPick {
+                title = "\(tauntPick.category).txt"
+                body = tauntPick.content
+            } else {
+                title = decision.noteTitle.isEmpty ? customPick.title : decision.noteTitle
+                body = customPick.body
             }
-            GooseStats.shared.recordPrank("Dragged notepad: \(title)", kind: .note)
-            scheduler.request(
+            let started = scheduler.request(
                 priority: .prank,
                 task: NotepadDeliveryTask(gooseID: gooseID, title: title, body: body, effects: effects),
                 behavior: .stickyNotes,
                 timeout: 30,
                 on: simulation
             )
+            if started {
+                if settings.aiEnabled {
+                    NotificationManager.shared.post(
+                        category: .aiMessage,
+                        title: "Goose wrote \(title)",
+                        body: body.replacingOccurrences(of: "\n", with: " ")
+                    )
+                }
+                GooseStats.shared.recordPrank("Dragged memo: \(title)", kind: .note)
+            }
+            return started
         case .meme:
             guard settings.memesEnabled,
                   !settings.allPranksDisabled,
-                  let memeItem = UserContentManager.shared.pickNextMeme(),
-                  scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return }
-            GooseStats.shared.recordPrank("Delivered meme: \(memeItem.filename)", kind: .window)
-            scheduler.request(
+                  let memePick = MemeLibraryStore.shared.pickWeightedMeme(),
+                  scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return false }
+            let memeItem = memePick.0
+            let caption = TauntLibraryStore.shared.pickWeightedTaunt()?.content ?? ""
+            let started = scheduler.request(
                 priority: .prank,
-                task: MemeDeliveryTask(gooseID: gooseID, item: memeItem, effects: effects),
+                task: MemeDeliveryTask(gooseID: gooseID, item: memeItem, caption: caption, effects: effects),
                 behavior: .windowPranks,
                 timeout: 30,
                 on: simulation
             )
+            if started {
+                GooseStats.shared.recordPrank("Delivered meme: \(memeItem.filename)", kind: .window)
+            }
+            return started
         case .photo:
-            guard scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return }
-            GooseStats.shared.recordPrank("Dragged a photo onto your screen", kind: .window)
-            scheduler.request(
+            guard scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return false }
+            let started = scheduler.request(
                 priority: .prank,
                 task: DragWindowTask(gooseID: gooseID, effects: effects) {
                     guard let pick = PhotoLibrary.randomImage() else {
@@ -143,35 +164,42 @@ final class AgentDirector {
                 timeout: 30,
                 on: simulation
             )
+            if started {
+                GooseStats.shared.recordPrank("Dragged a photo onto your screen", kind: .window)
+            }
+            return started
         case .browse:
             guard settings.allowWebBrowsing,
                   let url = decision.browseURL,
-                  scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return }
-            GooseStats.shared.recordPrank("Opened a web page: \(url.host ?? url.absoluteString)", kind: .window)
-            scheduler.request(
+                  scheduler.allowsTaskStart(priority: .prank, behavior: .windowPranks, on: simulation) else { return false }
+            let started = scheduler.request(
                 priority: .prank,
                 task: BrowseTask(url: url, effects: effects),
                 behavior: .windowPranks,
                 timeout: Tuning.browseDwellSeconds + 5,
                 on: simulation
             )
+            if started {
+                GooseStats.shared.recordPrank("Opened a web page: \(url.host ?? url.absoluteString)", kind: .window)
+            }
+            return started
         case .chill:
-            scheduler.request(priority: .ambient, task: ChillingTask(spotifyURI: decision.spotifyURI, effects: effects), behavior: .spotifyChill, timeout: 320, on: simulation)
+            return scheduler.request(priority: .ambient, task: ChillingTask(spotifyURI: decision.spotifyURI, effects: effects), behavior: .spotifyChill, timeout: 320, on: simulation)
         case .fakeError:
-            scheduler.request(priority: .prank, task: FakeErrorTask(effects: effects, personality: goosePersonality), behavior: .fakeErrors, timeout: 10, on: simulation)
+            return scheduler.request(priority: .prank, task: FakeErrorTask(effects: effects, personality: goosePersonality), behavior: .fakeErrors, timeout: 10, on: simulation)
         case .desktopMess:
-            scheduler.request(priority: .prank, task: DesktopMessTask(effects: effects), behavior: .desktopMess, timeout: 20, on: simulation)
+            return scheduler.request(priority: .prank, task: DesktopMessTask(effects: effects), behavior: .desktopMess, timeout: 20, on: simulation)
         case .gooseTheft:
-            scheduler.request(priority: .prank, task: GooseTheftTask(effects: effects), behavior: .gooseTheft, timeout: 16, on: simulation)
+            return scheduler.request(priority: .prank, task: GooseTheftTask(effects: effects), behavior: .gooseTheft, timeout: 16, on: simulation)
         case .windowPeek:
-            scheduler.request(priority: .prank, task: WindowPeekTask(effects: effects), behavior: .windowPeek, timeout: 14, on: simulation)
+            return scheduler.request(priority: .prank, task: WindowPeekTask(effects: effects), behavior: .windowPeek, timeout: 14, on: simulation)
         case .windowPrank:
-            scheduler.request(priority: .prank, task: WindowPrankTask(gooseID: gooseID, effects: effects, personality: goosePersonality), behavior: .windowPranks, timeout: 14, on: simulation)
+            return scheduler.request(priority: .prank, task: WindowPrankTask(gooseID: gooseID, effects: effects, personality: goosePersonality), behavior: .windowPranks, timeout: 14, on: simulation)
         case .mouseChase:
-            scheduler.request(priority: .prank, task: MouseChaseTask(effects: effects, personality: goosePersonality), behavior: .mouseChase, timeout: settings.mouseChaseDuration + 2, on: simulation)
+            return scheduler.request(priority: .prank, task: MouseChaseTask(effects: effects, personality: goosePersonality), behavior: .mouseChase, timeout: settings.mouseChaseDuration + 2, on: simulation)
         case .mouseTheft:
-            guard settings.effectiveMouseTheft else { return }
-            scheduler.request(priority: .prank, task: NabMouseTask(gooseID: gooseID, priority: .normalPrank, effects: effects, personality: goosePersonality), behavior: .mouseTheft, timeout: settings.mouseChaseDuration + settings.mouseDragDuration + 4, on: simulation)
+            guard settings.effectiveMouseTheft else { return false }
+            return scheduler.request(priority: .prank, task: NabMouseTask(gooseID: gooseID, priority: .normalPrank, effects: effects, personality: goosePersonality), behavior: .mouseTheft, timeout: settings.mouseChaseDuration + settings.mouseDragDuration + 4, on: simulation)
         }
     }
 }

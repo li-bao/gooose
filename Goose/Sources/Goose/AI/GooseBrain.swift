@@ -36,7 +36,7 @@ final class GooseBrain {
         for _ in 0..<3 {
             if let candidate = await rollOnce(snapshot: snapshot, goosePersonality: personality) {
                 let key = summary(of: candidate)
-                if recentActions.last == key { continue }
+                if recentActions.last == key || recentActions.last == candidate.action.rawValue { continue }
                 return candidate
             }
         }
@@ -71,7 +71,7 @@ final class GooseBrain {
             (.gooseTheft, settings.allows(.gooseTheft) ? 5 * prank * aggr : 0),
             (.windowPeek, settings.allows(.windowPeek) ? 7 * curious : 0),
             (.windowPrank, (windows && hasAX) ? 6 * prank * aggr : 0),
-            (.mouseChase, settings.allows(.mouseChase) ? 7 * (goosePersonality?.approachBias ?? 0.5 + 0.5) : 0),
+            (.mouseChase, settings.allows(.mouseChase) ? 7 * ((goosePersonality?.approachBias ?? 0.5) + 0.5) : 0),
             (.mouseTheft, settings.effectiveMouseTheft ? 6 * prank * aggr * settings.mouseTheftProbability : 0),
         ]
         weights.removeAll { $0.1 <= 0 }

@@ -34,9 +34,13 @@ final class GooseTheftTask: GooseTask {
             iconOrigin = existing.position
         } else {
             iconLabel = DesktopMessOverlay.ItemKind.sampleNames[.fakeIcon]?.randomElement() ?? "Trash (Full)"
-            let w = max(240, simulation.screenSize.width)
-            let h = max(240, simulation.screenSize.height)
-            iconOrigin = CGPoint(x: CGFloat.random(in: 120...(w - 120)), y: CGFloat.random(in: 140...(h - 140)))
+            let w = max(260, simulation.screenSize.width)
+            let h = max(300, simulation.screenSize.height)
+            let minX = min(120, w * 0.25)
+            let maxX = max(minX + 1, w - minX)
+            let minY = min(140, h * 0.25)
+            let maxY = max(minY + 1, h - minY)
+            iconOrigin = CGPoint(x: CGFloat.random(in: minX...maxX), y: CGFloat.random(in: minY...maxY))
         }
 
         stage = .approachIcon

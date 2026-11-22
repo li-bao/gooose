@@ -91,14 +91,17 @@ final class NabMouseTask: GooseTask {
             GlobalActionCoordinator.shared.releaseLock(lease, status: didRecordSteal ? .completed : .cancelled)
         }
         if didRecordSteal {
-            let beak = simulation.beakPosition
-            let p = personality
-            let eff = effects
-            Task { @MainActor in
-                let line = await GooseController.shared.llm.generateTaunt(personality: p, event: "stole mouse cursor")
-                eff?.showTaunt(line, at: beak)
-            }
             didRecordSteal = false
+            if GooseController.shared.allowsProactive {
+                let beak = simulation.beakPosition
+                let p = personality
+                let eff = effects
+                Task { @MainActor in
+                    let line = await GooseController.shared.llm.generateTaunt(personality: p, event: "stole mouse cursor")
+                    guard GooseController.shared.allowsProactive else { return }
+                    eff?.showTaunt(line, at: beak)
+                }
+            }
         }
         ownsCursor = false
     }
@@ -133,7 +136,7 @@ final class NabMouseTask: GooseTask {
             let settings = GooseSettings.shared
             guard willSteal else {
                 // Caught up with the cursor but chose (or is not allowed) to let go.
-                simulation.onHonk?()
+                effects?.playSoundEvent(.theft, gooseID: gooseID, isSleeping: false) ?? simulation.onHonk?()
                 simulation.setTask(WanderTask())
                 return
             }

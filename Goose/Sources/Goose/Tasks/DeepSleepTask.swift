@@ -29,7 +29,7 @@ final class DeepSleepTask: GooseTask {
         simulation.targetPos = simulation.position
         let duration = SamMath.randomRange(Self.minDuration, Self.maxDuration)
         endTime = GameTime.time + duration
-        initialMousePosition = NSEvent.mouseLocation
+        initialMousePosition = DisplayManager.shared.globalToScene(NSEvent.mouseLocation)
         hasMouseMoved = false
         lastLeftMouseDown = NSEvent.pressedMouseButtons & 1 != 0
         effects?.setSleeping(active: true)
@@ -44,7 +44,7 @@ final class DeepSleepTask: GooseTask {
         simulation.velocity = .zero2
         simulation.targetPos = simulation.position
 
-        let mouse = NSEvent.mouseLocation
+        let mouse = DisplayManager.shared.globalToScene(NSEvent.mouseLocation)
         let goose = simulation.position
         let distance = CGPoint.distance(mouse, goose)
 

@@ -26,10 +26,9 @@ final class GooseTests: XCTestCase {
         process.standardError = errPipe
 
         try process.run()
-        process.waitUntilExit()
-
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         return (
             process.terminationStatus,
             String(data: outData, encoding: .utf8) ?? "",
@@ -67,5 +66,17 @@ final class GooseTests: XCTestCase {
         XCTAssertEqual(result.status, 0, "stderr: \(result.stderr)")
         XCTAssertTrue(result.stdout.contains("[0]"))
         XCTAssertTrue(result.stdout.contains("[19]"))
+    }
+
+    func testPhase1AuditAndFixes() throws {
+        let result = try runGoose(args: ["--selftest-phase1"])
+        XCTAssertEqual(result.status, 0, "stderr: \(result.stderr)\nstdout: \(result.stdout)")
+        XCTAssertTrue(result.stdout.contains("ALL PASSED"), "stdout: \(result.stdout)")
+    }
+
+    func testPhase2Features() throws {
+        let result = try runGoose(args: ["--selftest-phase2"])
+        XCTAssertEqual(result.status, 0, "stderr: \(result.stderr)\nstdout: \(result.stdout)")
+        XCTAssertTrue(result.stdout.contains("ALL PASSED"), "stdout: \(result.stdout)")
     }
 }

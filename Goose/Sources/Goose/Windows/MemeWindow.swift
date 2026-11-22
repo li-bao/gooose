@@ -88,6 +88,7 @@ final class MemeWindow: NSWindow {
     private var frameIndex = 0
     private var animTimer: Timer?
     private var lifetimeTimer: Timer?
+    private var isClosed = false
 
     init?(item: MemeItem, maxDimension: CGFloat = 340) {
         guard let decoded = MemeImageDecoder.decode(url: item.url) else { return nil }
@@ -118,6 +119,10 @@ final class MemeWindow: NSWindow {
 
         buildUI(size: targetSize)
         showFrame(0)
+    }
+
+    override func orderFrontRegardless() {
+        super.orderFrontRegardless()
         startGIFAnimationIfNeeded()
     }
 
@@ -166,7 +171,7 @@ final class MemeWindow: NSWindow {
     }
 
     private func startGIFAnimationIfNeeded() {
-        guard decoded.isAnimated else { return }
+        guard decoded.isAnimated, !isClosed, animTimer == nil else { return }
         scheduleNextFrame()
     }
 
@@ -175,7 +180,11 @@ final class MemeWindow: NSWindow {
         animTimer?.invalidate()
         animTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isVisible else { return }
+                guard let self, !self.isClosed else { return }
+                if !self.isVisible {
+                    self.animTimer = nil
+                    return
+                }
                 self.frameIndex = (self.frameIndex + 1) % self.decoded.frames.count
                 self.showFrame(self.frameIndex)
                 self.scheduleNextFrame()
@@ -198,6 +207,7 @@ final class MemeWindow: NSWindow {
     }
 
     override func close() {
+        isClosed = true
         animTimer?.invalidate()
         animTimer = nil
         lifetimeTimer?.invalidate()

@@ -51,14 +51,15 @@ final class GooseInstance: Identifiable {
 
     var marksNode: SKNode { art.marksNode }
 
-    /// Individual energy level (0.0 exhausted ... 1.0 rested), derived from `personality.fatigue`.
-    var energy: Double { max(0, min(1, 1.0 - personality.fatigue)) }
-    var energyPercent: Int { Int((energy * 100).rounded()) }
+    /// Individual energy level (0.0 exhausted ... 1.0 rested), derived from `personality.energy`.
+    var energy: Double { max(0, min(1, personality.energy / 100.0)) }
+    var energyPercent: Int { Int(personality.energy.rounded()) }
+    var emotion: GooseEmotion { personality.emotion }
 
     init(numericID: Int, isLead: Bool, screenSize: CGSize) {
         self.numericID = numericID
         self.isLead = isLead
-        self.personality = GoosePersonality(isLead: isLead)
+        self.personality = GoosePersonality(numericID: numericID, isLead: isLead)
 
         simulation.screenSize = screenSize
         let w = max(220, screenSize.width)
@@ -77,6 +78,7 @@ final class GooseInstance: Identifiable {
         simulation.setTask(WanderTask())
 
         container.addChild(art.node)
+        art.update(simulation: simulation)
         nextThinkTime = GameTime.time + CGFloat.random(in: 8...14)
     }
 
@@ -130,6 +132,7 @@ final class GooseInstance: Identifiable {
     func teardown() {
         guard isAlive else { return }
         isAlive = false
+        personality.persistState()
         GlobalActionCoordinator.shared.releaseAllLocks(for: id)
         BehaviorScheduler.shared.cancelAll(on: simulation)
         simulation.clearFootMarks()

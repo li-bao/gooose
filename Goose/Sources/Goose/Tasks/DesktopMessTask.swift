@@ -20,10 +20,14 @@ final class DesktopMessTask: GooseTask {
             return
         }
         let drops = Int.random(in: 2...3)
-        let w = max(200, simulation.screenSize.width)
-        let h = max(200, simulation.screenSize.height)
+        let w = max(220, simulation.screenSize.width)
+        let h = max(260, simulation.screenSize.height)
+        let minX = min(100, w * 0.25)
+        let maxX = max(minX + 1, w - minX)
+        let minY = min(120, h * 0.25)
+        let maxY = max(minY + 1, h - minY)
         targets = (0..<drops).map { _ in
-            CGPoint(x: CGFloat.random(in: 100...(w - 100)), y: CGFloat.random(in: 120...(h - 120)))
+            CGPoint(x: CGFloat.random(in: minX...maxX), y: CGFloat.random(in: minY...maxY))
         }
         currentIndex = 0
         simulation.setSpeed(.run)

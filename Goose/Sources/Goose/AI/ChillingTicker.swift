@@ -40,6 +40,7 @@ final class ChillingTicker {
     private var wasChilling = false
     private var lastSeenApp: String?
     private var recentURIs: [String] = []
+    private var isEvaluating = false
     private static let recentURICap = 3
 
     init(simulation: GooseSimulation,
@@ -54,6 +55,11 @@ final class ChillingTicker {
         self.llm = llm
     }
 
+    deinit {
+        baseTask?.cancel()
+        watchTask?.cancel()
+    }
+
     func start() {
         stop()
         baseTask = Task { [weak self] in
@@ -61,14 +67,16 @@ final class ChillingTicker {
                 let seconds = Double.random(in: Self.baseRange)
                 try? await Task.sleep(for: .seconds(seconds))
                 if Task.isCancelled { return }
-                await self?.tickOnce(reason: "base")
+                guard let self else { return }
+                await self.tickOnce(reason: "base")
             }
         }
         watchTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3))
                 if Task.isCancelled { return }
-                await self?.checkAppChange()
+                guard let self else { return }
+                await self.checkAppChange()
             }
         }
     }
@@ -94,10 +102,14 @@ final class ChillingTicker {
     }
 
     private func tickOnce(reason: String) async {
+        guard !isEvaluating else { return }
         guard let simulation, let effects else { return }
         updateChillTracking(simulation: simulation)
         guard GooseController.shared.allowsProactive, GooseSettings.shared.allows(.spotifyChill) else { return }
         if isBusy(simulation: simulation) { return }
+
+        isEvaluating = true
+        defer { isEvaluating = false }
 
         // Cooldown is measured from when the previous chill *ended*, not when
         // it started — chill duration (180–300s) is longer than the cooldown
@@ -121,6 +133,10 @@ final class ChillingTicker {
             snapshot: snapshot,
             candidates: candidates
         ) {
+            guard !Task.isCancelled,
+                  GooseController.shared.allowsProactive,
+                  GooseSettings.shared.allows(.spotifyChill),
+                  !isBusy(simulation: simulation) else { return }
             FileHandle.standardError.write(Data("[Goose] ChillingTicker(\(reason)): LLM \(decision.shouldChill ? "yes" : "no"): \(decision.reason)\n".utf8))
             if decision.shouldChill {
                 rememberURI(decision.playlistURI)

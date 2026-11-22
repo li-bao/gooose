@@ -21,6 +21,7 @@ final class PermissionManager: ObservableObject {
     /// When a user grants Screen Recording while the app is running, macOS
     /// ScreenCaptureKit frequently requires a full process restart before streams succeed.
     private let screenPreflightAtLaunch: Bool
+    private var liveCaptureVerifiedThisSession = false
     private var screenRequestInitiated = false
     private var axRequestInitiated = false
     private var didStartMonitoring = false
@@ -106,7 +107,9 @@ final class PermissionManager: ObservableObject {
     func refreshScreenRecording() {
         let preflight = CGPreflightScreenCaptureAccess()
         if preflight {
-            if !screenPreflightAtLaunch {
+            if liveCaptureVerifiedThisSession {
+                screenRecordingState = .authorized
+            } else if !screenPreflightAtLaunch {
                 screenRecordingState = .restartRequired(
                     reason: "Screen Recording was granted during this session. Quit and reopen Super Goose Desktop so ScreenCaptureKit receives the new authorization."
                 )
@@ -120,6 +123,7 @@ final class PermissionManager: ObservableObject {
         } else {
             screenRecordingState = screenRequestInitiated ? .requestInitiated : .notAuthorized
         }
+        refreshScreenObservationStatus()
     }
 
     func requestScreenRecordingAccess() {
@@ -156,7 +160,10 @@ final class PermissionManager: ObservableObject {
         case .success:
             lastScreenCaptureError = nil
             screenRequestInitiated = false
-            screenRecordingState = .authorized
+            if GooseSettings.shared.screenObservationMode == .automaticBackground {
+                liveCaptureVerifiedThisSession = true
+                screenRecordingState = .authorized
+            }
         case .failure(let failure):
             lastScreenCaptureError = failure
             switch failure {
@@ -170,6 +177,7 @@ final class PermissionManager: ObservableObject {
                 screenRecordingState = .error(message: failure.localizedDescription)
             }
         }
+        refreshScreenObservationStatus()
     }
 
     func recheckScreenRecordingWithLiveCapture(capturer: ScreenCapturer) async {
@@ -200,14 +208,15 @@ final class PermissionManager: ObservableObject {
     }
 
     func relaunchApplication() {
-        markPendingOCRResumeAfterRestart()
         guard Bundle.main.bundleURL.pathExtension == "app" else {
             return
         }
+        markPendingOCRResumeAfterRestart()
         let appURL = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, error in
+            guard error == nil else { return }
             Task { @MainActor in
                 NSApp.terminate(nil)
             }
@@ -263,7 +272,9 @@ final class PermissionManager: ObservableObject {
 
     var allActivePermissionsReady: Bool {
         let settings = GooseSettings.shared
-        if settings.screenRecognition && !screenRecordingState.isAuthorized {
+        if settings.screenRecognition &&
+           settings.screenObservationMode == .automaticBackground &&
+           !screenRecordingState.isAuthorized {
             return false
         }
         let needsAX = settings.isEnabled(.windowPranks) || settings.isEnabled(.windowPeek)

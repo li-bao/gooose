@@ -45,10 +45,7 @@ final class GooseInteractionSystem {
 
         // 20% chance of flock gathering when 3+ geese are free.
         if available.count >= 3 && Double.random(in: 0..<1) < 0.22 {
-            let anchor = CGPoint(
-                x: CGFloat.random(in: 140...max(141, available[0].simulation.screenSize.width - 140)),
-                y: CGFloat.random(in: 140...max(141, available[0].simulation.screenSize.height - 140))
-            )
+            let anchor = DisplayManager.shared.randomVisiblePoint(margin: 140)
             for goose in available {
                 let task = GooseInteractionTask(kind: .flockGather, partner: nil, effects: scene, flockAnchor: anchor, duration: 6.5)
                 goose.simulation.setTask(task)
@@ -57,30 +54,33 @@ final class GooseInteractionSystem {
             return
         }
 
-        // Pair two geese for chase/avoid/walk/argue/tugNote.
-        let a = available[0]
-        let b = available[1]
-        let kinds: [SocialInteractionKind] = [.chasePeer, .walkTogether, .argue, .tugNote]
+        // Pair two geese for social interactions (chasing, greeting, fighting, playing, sleeping, meme/memo sharing).
+        let shuffled = available.shuffled()
+        let a = shuffled[0]
+        let b = shuffled[1]
+        let kinds: [SocialInteractionKind] = [
+            .chasePeer, .walkTogether, .greetPeer, .argue, .playTogether, .sleepTogether, .stealMeme, .shareMemo, .tugNote
+        ]
         let pick = kinds.randomElement() ?? .walkTogether
 
         switch pick {
-        case .chasePeer:
-            a.simulation.setTask(GooseInteractionTask(kind: .chasePeer, partner: b, effects: scene, duration: 5.0))
+        case .chasePeer, .playTogether, .stealMeme:
+            a.simulation.setTask(GooseInteractionTask(kind: pick, partner: b, effects: scene, duration: 5.0))
             b.simulation.setTask(GooseInteractionTask(kind: .avoidPeer, partner: a, effects: scene, duration: 5.0))
-            a.recordInteraction("Chased Goose \(b.numericID)")
+            a.recordInteraction("\(pick.displayName) (Goose \(b.numericID))")
             b.recordInteraction("Dodged Goose \(a.numericID)")
 
-        case .walkTogether:
-            a.simulation.setTask(GooseInteractionTask(kind: .walkTogether, partner: b, effects: scene, duration: 6.0))
-            b.simulation.setTask(GooseInteractionTask(kind: .walkTogether, partner: a, effects: scene, duration: 6.0))
-            a.recordInteraction("Walked with Goose \(b.numericID)")
-            b.recordInteraction("Walked with Goose \(a.numericID)")
+        case .walkTogether, .sleepTogether, .greetPeer, .shareMemo:
+            a.simulation.setTask(GooseInteractionTask(kind: pick, partner: b, effects: scene, duration: 6.0))
+            b.simulation.setTask(GooseInteractionTask(kind: pick, partner: a, effects: scene, duration: 6.0))
+            a.recordInteraction("\(pick.displayName) (Goose \(b.numericID))")
+            b.recordInteraction("\(pick.displayName) (Goose \(a.numericID))")
 
         case .argue, .tugNote:
             a.simulation.setTask(GooseInteractionTask(kind: pick, partner: b, effects: scene, duration: 5.5))
             b.simulation.setTask(GooseInteractionTask(kind: pick, partner: a, effects: scene, duration: 5.5))
-            a.recordInteraction("\(pick.rawValue) with Goose \(b.numericID)")
-            b.recordInteraction("\(pick.rawValue) with Goose \(a.numericID)")
+            a.recordInteraction("\(pick.displayName) (Goose \(b.numericID))")
+            b.recordInteraction("\(pick.displayName) (Goose \(a.numericID))")
 
         default:
             break

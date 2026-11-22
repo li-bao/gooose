@@ -2,32 +2,45 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// Goose walks to the display edge, grabs a user-imported MemeWindow (PNG/JPG/animated GIF)
-/// from outside visible screen bounds, pulls it smoothly onto the screen along a Bezier
-/// path, releases it cleanly inside `visibleFrame`, and reacts.
+/// Goose walks to the configured display edge, grabs a `GooseNotepadWindow`
+/// (unified Memo Editor container) holding a user-imported PNG/JPG/JPEG/WEBP/animated GIF
+/// meme + editable caption, drags it smoothly onto `NSScreen.visibleFrame`, plays a
+/// settle bounce, and unlocks interaction.
 @MainActor
 final class MemeDeliveryTask: GooseTask {
-    enum Stage {
+    enum Stage: Equatable {
         case walkingToEdge
         case pullingIn
+        case settling
     }
 
     let gooseID: UUID
     private let memeItem: MemeItem
+    private let caption: String
     private weak var effects: GooseSceneEffects?
     private var windowLease: ResourceLease?
 
-    private var stage: Stage = .walkingToEdge
+    private(set) var stage: Stage = .walkingToEdge
+    private var activeEntryStyle: MemoEntryStyle = .dragFromLeft
+    private var stageDeadline: CGFloat = 0
     private var edgeStartScene: CGPoint = .zero
+    private var startCenterScene: CGPoint = .zero
     private var dropTargetScene: CGPoint = .zero
     private var controlPointScene: CGPoint = .zero
-    private var pullProgress: CGFloat = 0
+    private var finalClampedGlobalOrigin: CGPoint = .zero
+    private var pullElapsed: CGFloat = 0
+    private var pullDuration: CGFloat = 2.0
+    private var settleElapsed: CGFloat = 0
+    private let settleDuration: CGFloat = 0.24
     private var targetScreenFrame: CGRect = .zero
-    private var window: MemeWindow?
+    private var window: GooseNotepadWindow?
+    private var deliveryCompleted = false
+    private var didEmitDeliveryHonk = false
 
-    init(gooseID: UUID = UUID(), item: MemeItem, effects: GooseSceneEffects) {
+    init(gooseID: UUID = UUID(), item: MemeItem, caption: String = "", effects: GooseSceneEffects?) {
         self.gooseID = gooseID
         self.memeItem = item
+        self.caption = caption
         self.effects = effects
     }
 
@@ -54,19 +67,24 @@ final class MemeDeliveryTask: GooseTask {
         windowLease = lease
         let dm = DisplayManager.shared
         let screenIdx = dm.screenIndex(for: simulation.position) ?? 0
-        let localFrame = dm.screenFrames.indices.contains(screenIdx)
-            ? dm.screenFrames[screenIdx]
-            : CGRect(origin: .zero, size: simulation.screenSize)
-        targetScreenFrame = localFrame
+        let localVisible = dm.visibleFrame(forScreenIndex: screenIdx, fallbackSize: simulation.screenSize)
+        targetScreenFrame = localVisible
 
-        let fromLeft = (simulation.position.x - localFrame.minX) < (localFrame.maxX - simulation.position.x)
-        let edgeX = fromLeft ? localFrame.minX + 12 : localFrame.maxX - 12
-        let edgeY = CGFloat.random(in: (localFrame.minY + 120)...max(localFrame.minY + 121, localFrame.maxY - 120))
-        edgeStartScene = CGPoint(x: edgeX, y: edgeY)
+        let cfg = AnimationStudioStore.shared.settings
+        if cfg.entryStyle == .randomEdge {
+            let nearLeft = (simulation.position.x - localVisible.minX) < (localVisible.maxX - simulation.position.x)
+            activeEntryStyle = Bool.random()
+                ? (nearLeft ? .dragFromLeft : .dragFromRight)
+                : ([.dragFromLeft, .dragFromRight, .dragFromTop, .dragFromBottom].randomElement() ?? .dragFromLeft)
+        } else {
+            activeEntryStyle = cfg.entryStyle
+        }
 
+        edgeStartScene = NotepadDeliveryTask.edgePoint(for: activeEntryStyle, in: localVisible, near: simulation.position)
         simulation.setSpeed(.run)
         simulation.targetPos = edgeStartScene
         stage = .walkingToEdge
+        stageDeadline = GameTime.time + 10.0
     }
 
     func tick(simulation: GooseSimulation) {
@@ -77,11 +95,13 @@ final class MemeDeliveryTask: GooseTask {
 
         switch stage {
         case .walkingToEdge:
-            if CGPoint.distance(simulation.position, edgeStartScene) < 34 {
+            if CGPoint.distance(simulation.position, edgeStartScene) < 34 || GameTime.time >= stageDeadline {
                 beginPull(simulation: simulation)
             }
         case .pullingIn:
             tickPull(simulation: simulation)
+        case .settling:
+            tickSettle(simulation: simulation)
         }
     }
 
@@ -90,21 +110,32 @@ final class MemeDeliveryTask: GooseTask {
             windowLease = nil
             GlobalActionCoordinator.shared.releaseLock(lease)
         }
+        if !deliveryCompleted, let win = window {
+            win.resetDragVisual()
+            win.close()
+            window = nil
+        }
     }
 
     private func beginPull(simulation: GooseSimulation) {
-        guard let memeWin = MemeWindow(item: memeItem) else {
-            simulation.setTask(WanderTask())
-            return
-        }
-        MemeWindowRegistry.shared.register(memeWin, maxVisible: GooseSettings.shared.maxVisibleMemes)
-        self.window = memeWin
+        let memoWin = GooseNotepadWindow(title: memeItem.filename, body: caption, memeItem: memeItem)
+        memoWin.setInteractive(false)
+        NotepadWindowRegistry.shared.register(memoWin, maxVisible: GooseSettings.shared.maxVisibleMemes)
+        self.window = memoWin
 
-        let s = memeWin.targetSize
+        let s = memoWin.targetSize
+        let startOrigin = NotepadDeliveryTask.edgeWindowOrigin(
+            for: activeEntryStyle,
+            edgePoint: edgeStartScene,
+            in: targetScreenFrame,
+            windowSize: s
+        )
+        startCenterScene = CGPoint(x: startOrigin.x + s.width * 0.5, y: startOrigin.y + s.height * 0.5)
+
         let safeMinX = targetScreenFrame.minX + 40
         let safeMaxX = max(safeMinX + 1, targetScreenFrame.maxX - s.width - 40)
         let safeMinY = targetScreenFrame.minY + 40
-        let safeMaxY = max(safeMinY + 1, targetScreenFrame.maxY - s.height - 60)
+        let safeMaxY = max(safeMinY + 1, targetScreenFrame.maxY - s.height - 48)
 
         let finalSceneOrigin = CGPoint(
             x: CGFloat.random(in: safeMinX...safeMaxX),
@@ -114,22 +145,37 @@ final class MemeDeliveryTask: GooseTask {
             x: finalSceneOrigin.x + s.width * 0.5,
             y: finalSceneOrigin.y + s.height * 0.5
         )
+        let arcOffset: CGFloat = (dropTargetScene.y >= startCenterScene.y) ? 28 : -28
+        let rawMidY = (startCenterScene.y + dropTargetScene.y) * 0.5 + arcOffset
+        let safeMidY = SamMath.clamp(
+            rawMidY,
+            targetScreenFrame.minY + s.height * 0.5 + 12,
+            max(targetScreenFrame.minY + s.height * 0.5 + 13, targetScreenFrame.maxY - s.height * 0.5 - 12)
+        )
         controlPointScene = CGPoint(
-            x: (edgeStartScene.x + dropTargetScene.x) * 0.5,
-            y: max(edgeStartScene.y, dropTargetScene.y) + 80
+            x: (startCenterScene.x + dropTargetScene.x) * 0.5,
+            y: safeMidY
         )
 
-        let startGlobal = Self.offscreenOriginGlobal(
-            sceneOrigin: edgeStartScene,
-            screenFrame: targetScreenFrame,
-            windowSize: s
-        )
-        memeWin.setFrameOrigin(startGlobal)
-        memeWin.orderFrontRegardless()
+        let cfg = AnimationStudioStore.shared.settings
+        let dist = CGPoint.distance(startCenterScene, dropTargetScene)
+        let speed = max(0.5, min(2.0, CGFloat(GooseSettings.shared.deliveryAnimationSpeed) * CGFloat(cfg.movementSpeed)))
+        let baseDuration = SamMath.clamp(CGFloat(cfg.entryDuration) * (0.8 + dist / 1400.0), 1.5, 3.0)
+        pullDuration = SamMath.clamp(baseDuration / speed, 1.2, 3.5)
 
-        pullProgress = 0
+        let startGlobal = DisplayManager.shared.sceneToGlobal(startOrigin)
+        memoWin.setFrameOrigin(startGlobal)
+        memoWin.orderFrontRegardless()
+
+        pullElapsed = 0
         stage = .pullingIn
-        _ = SoundEffectEngine.shared.playMovement(.memeDrag, category: .meme, priority: .normal)
+        if !AudioPackManager.shared.playEventSound(.memeAppearance) {
+            _ = SoundEffectEngine.shared.playMovement(.memeDrag, category: .meme, priority: .normal)
+        }
+        if !didEmitDeliveryHonk {
+            didEmitDeliveryHonk = true
+            effects?.playSoundEvent(.delivery, gooseID: gooseID, isSleeping: false)
+        }
     }
 
     private func tickPull(simulation: GooseSimulation) {
@@ -138,33 +184,89 @@ final class MemeDeliveryTask: GooseTask {
             return
         }
 
-        let speed = max(0.35, CGFloat(GooseSettings.shared.deliveryAnimationSpeed))
-        pullProgress = min(1.0, pullProgress + CGFloat(GameTime.deltaTime) * 0.68 * speed)
-
-        let t = pullProgress
+        let cfg = AnimationStudioStore.shared.settings
+        pullElapsed += GameTime.deltaTime
+        let rawU = min(1.0, pullElapsed / max(0.1, pullDuration))
+        let t = cfg.easeCurve.evaluate(rawU)
         let oneMinusT = 1.0 - t
-        let pos = CGPoint(
-            x: oneMinusT * oneMinusT * edgeStartScene.x + 2 * oneMinusT * t * controlPointScene.x + t * t * dropTargetScene.x,
-            y: oneMinusT * oneMinusT * edgeStartScene.y + 2 * oneMinusT * t * controlPointScene.y + t * t * dropTargetScene.y
-        )
 
-        simulation.position = pos
-        simulation.targetPos = pos
+        let bezierX = oneMinusT * oneMinusT * startCenterScene.x + 2 * oneMinusT * t * controlPointScene.x + t * t * dropTargetScene.x
+        let bezierY = oneMinusT * oneMinusT * startCenterScene.y + 2 * oneMinusT * t * controlPointScene.y + t * t * dropTargetScene.y
+        let bobY = sin(rawU * .pi * 3.5) * 4.0 * (1.0 - rawU)
+        let windowCenterScene = CGPoint(x: bezierX, y: bezierY + bobY)
+
+        let tangentX = 2 * oneMinusT * (controlPointScene.x - startCenterScene.x) + 2 * t * (dropTargetScene.x - controlPointScene.x)
+        let tangentY = 2 * oneMinusT * (controlPointScene.y - startCenterScene.y) + 2 * t * (dropTargetScene.y - controlPointScene.y)
+        if hypot(tangentX, tangentY) > 0.01 {
+            simulation.direction = atan2(tangentY, tangentX) * SamMath.rad2Deg
+        }
+
+        let s = memeWin.targetSize
+        let offset = CGFloat(cfg.dragOffset)
+        let gooseAnchor: CGPoint
+        switch activeEntryStyle {
+        case .dragFromRight:
+            gooseAnchor = CGPoint(x: windowCenterScene.x - s.width * 0.5 - offset, y: windowCenterScene.y - 10)
+        case .dragFromTop:
+            gooseAnchor = CGPoint(x: windowCenterScene.x, y: windowCenterScene.y - s.height * 0.5 - offset)
+        case .dragFromBottom:
+            gooseAnchor = CGPoint(x: windowCenterScene.x, y: windowCenterScene.y + s.height * 0.5 + offset)
+        case .gooseCarry:
+            gooseAnchor = CGPoint(x: windowCenterScene.x, y: windowCenterScene.y - 18)
+        default:
+            gooseAnchor = CGPoint(x: windowCenterScene.x + s.width * 0.5 + offset, y: windowCenterScene.y - 10)
+        }
+        simulation.position = gooseAnchor
+        simulation.targetPos = gooseAnchor
         simulation.overrideExtendNeck = true
 
-        let globalCenter = DisplayManager.shared.sceneToGlobal(pos)
-        let clampedOrigin = Self.clampWindowOrigin(
-            CGPoint(x: globalCenter.x - memeWin.targetSize.width * 0.5, y: globalCenter.y - memeWin.targetSize.height * 0.5),
-            windowSize: memeWin.targetSize,
-            onlyClampAtFinal: t >= 1.0
-        )
-        memeWin.setFrameOrigin(clampedOrigin)
+        let maxRotRad = CGFloat(cfg.rotationDegrees) * SamMath.deg2Rad
+        let tilt = sin(rawU * .pi * 3.0) * maxRotRad * (1.0 - rawU)
+        memeWin.applyDragVisual(tiltRadians: tilt)
 
-        if pullProgress >= 1.0 {
+        let globalCenter = DisplayManager.shared.sceneToGlobal(windowCenterScene)
+        let origin = CGPoint(x: globalCenter.x - s.width * 0.5, y: globalCenter.y - s.height * 0.5)
+        memeWin.setFrameOrigin(origin)
+
+        if rawU >= 1.0 {
+            let finalGlobalCenter = DisplayManager.shared.sceneToGlobal(dropTargetScene)
+            finalClampedGlobalOrigin = Self.clampWindowOrigin(
+                CGPoint(x: finalGlobalCenter.x - s.width * 0.5, y: finalGlobalCenter.y - s.height * 0.5),
+                windowSize: s,
+                onlyClampAtFinal: true
+            )
+            memeWin.setFrameOrigin(finalClampedGlobalOrigin)
+            settleElapsed = 0
+            stage = .settling
+            if !AudioPackManager.shared.playEventSound(.memoDrop) {
+                _ = SoundEffectEngine.shared.playMovement(.notepadLand, category: .meme, priority: .normal)
+            }
+        }
+    }
+
+    private func tickSettle(simulation: GooseSimulation) {
+        guard let memeWin = window else {
+            simulation.setTask(WanderTask())
+            return
+        }
+
+        let bounce = CGFloat(AnimationStudioStore.shared.settings.bounceIntensity)
+        settleElapsed += GameTime.deltaTime
+        let p = min(1.0, settleElapsed / settleDuration)
+        let scale = 1.0 + sin(p * .pi) * (0.045 * bounce) * (1.0 - p)
+        let dy = -sin(p * .pi) * (4.0 * bounce) * (1.0 - p)
+
+        memeWin.applyDragVisual(tiltRadians: 0, scale: scale)
+        memeWin.setFrameOrigin(CGPoint(x: finalClampedGlobalOrigin.x, y: finalClampedGlobalOrigin.y + dy))
+
+        if p >= 1.0 {
+            memeWin.resetDragVisual()
+            memeWin.setFrameOrigin(finalClampedGlobalOrigin)
+            memeWin.setInteractive(true)
             memeWin.scheduleAutoDismiss(after: GooseSettings.shared.memeLifetime)
-            _ = SoundEffectEngine.shared.playMovement(.notepadLand, category: .meme, priority: .normal)
-            effects?.playSoundEvent(.prank)
             effects?.spawnHearts(at: simulation.position, count: 3)
+            deliveryCompleted = true
+            window = nil
             simulation.setTask(WanderTask())
         }
     }

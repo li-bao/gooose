@@ -22,6 +22,12 @@ final class WanderTask: GooseTask {
     }
 
     func tick(simulation: GooseSimulation) {
+        if !GooseSettings.shared.wanderingEnabled {
+            simulation.velocity = .zero2
+            simulation.targetPos = simulation.position
+            return
+        }
+
         if GameTime.time - wanderingStartTime > wanderingDuration {
             start(simulation: simulation)
             return

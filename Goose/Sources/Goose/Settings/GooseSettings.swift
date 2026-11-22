@@ -44,6 +44,29 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+enum RandomHonkFrequency: String, CaseIterable, Identifiable, Codable, Sendable {
+    case off, low, medium, high
+    var id: String { rawValue }
+
+    var intervalMultiplier: Double {
+        switch self {
+        case .off:    return 0
+        case .low:    return 0.5
+        case .medium: return 1.0
+        case .high:   return 1.8
+        }
+    }
+
+    var triggerProbability: Double {
+        switch self {
+        case .off:    return 0
+        case .low:    return 0.35
+        case .medium: return 0.65
+        case .high:   return 0.90
+        }
+    }
+}
+
 enum HotkeyAction: String, CaseIterable, Identifiable, Sendable {
     case pauseResume
     case hideAll
@@ -115,7 +138,7 @@ enum GooseBehavior: String, CaseIterable, Identifiable, Sendable {
 final class GooseSettings: ObservableObject {
     static let shared = GooseSettings()
 
-    static let schemaVersion = 4
+    static let schemaVersion = 6
     private let defaults: UserDefaults
     private let prefix = "settings."
 
@@ -159,8 +182,18 @@ final class GooseSettings: ObservableObject {
     @Published var masterVolume: Double { didSet { save("masterVolume", masterVolume) } }
     @Published var honkVolume: Double { didSet { save("honkVolume", honkVolume) } }
     @Published var soundEffects: Bool { didSet { save("soundEffects", soundEffects) } }
-    @Published var muteGoose: Bool { didSet { save("muteGoose", muteGoose) } }
+    @Published var muteGoose: Bool {
+        didSet {
+            save("muteGoose", muteGoose)
+            if muteGoose {
+                SoundEffectEngine.shared.stopAll()
+                GooseController.shared.scene?.stopAudio()
+            }
+        }
+    }
     @Published var randomHonking: Bool { didSet { save("randomHonking", randomHonking) } }
+    @Published var randomHonkFrequency: RandomHonkFrequency { didSet { save("randomHonkFrequency", randomHonkFrequency.rawValue) } }
+    @Published var honkCooldown: Double { didSet { save("honkCooldown", honkCooldown) } }
     @Published var soundFrequency: Double { didSet { save("soundFrequency", soundFrequency) } }
 
     // Personality (0...1)
@@ -203,7 +236,15 @@ final class GooseSettings: ObservableObject {
     var onHotkeysChanged: (() -> Void)?
 
     // Ultimate Desktop Goose (v2.1): Audio, Memes, Notepads, Personality Packs, Screen Observation
-    @Published var masterSoundEnabled: Bool { didSet { save("masterSoundEnabled", masterSoundEnabled); if !masterSoundEnabled { SoundEffectEngine.shared.stopAll() } } }
+    @Published var masterSoundEnabled: Bool {
+        didSet {
+            save("masterSoundEnabled", masterSoundEnabled)
+            if !masterSoundEnabled {
+                SoundEffectEngine.shared.stopAll()
+                GooseController.shared.scene?.stopAudio()
+            }
+        }
+    }
     @Published var duckSoundsEnabled: Bool { didSet { save("duckSoundsEnabled", duckSoundsEnabled) } }
     @Published var gooseSoundsEnabled: Bool { didSet { save("gooseSoundsEnabled", gooseSoundsEnabled) } }
     @Published var footstepsEnabled: Bool { didSet { save("footstepsEnabled", footstepsEnabled) } }
@@ -223,6 +264,7 @@ final class GooseSettings: ObservableObject {
     @Published var notepadLifetime: Double { didSet { save("notepadLifetime", notepadLifetime) } }
     @Published var preventRepeatedMessages: Bool { didSet { save("preventRepeatedMessages", preventRepeatedMessages) } }
     @Published var deliveryAnimationSpeed: Double { didSet { save("deliveryAnimationSpeed", deliveryAnimationSpeed) } }
+    @Published var memoAlwaysOnTop: Bool { didSet { save("memoAlwaysOnTop", memoAlwaysOnTop) } }
 
     @Published var personalityCategory: GoosePersonalityCategory { didSet { save("personalityCategory", personalityCategory.rawValue) } }
     @Published var disabledPhrasePacks: [String] { didSet { save("disabledPhrasePacks", disabledPhrasePacks) } }
@@ -287,6 +329,8 @@ final class GooseSettings: ObservableObject {
         soundEffects = get("soundEffects", true)
         muteGoose = get("muteGoose", false)
         randomHonking = get("randomHonking", true)
+        randomHonkFrequency = RandomHonkFrequency(rawValue: get("randomHonkFrequency", RandomHonkFrequency.low.rawValue)) ?? .low
+        honkCooldown = get("honkCooldown", 20.0)
         soundFrequency = get("soundFrequency", 1.0)
 
         naughty = get("naughty", 0.5)
@@ -353,6 +397,7 @@ final class GooseSettings: ObservableObject {
         notepadLifetime = get("notepadLifetime", 35.0)
         preventRepeatedMessages = get("preventRepeatedMessages", true)
         deliveryAnimationSpeed = get("deliveryAnimationSpeed", 1.0)
+        memoAlwaysOnTop = get("memoAlwaysOnTop", true)
 
         personalityCategory = GoosePersonalityCategory(rawValue: get("personalityCategory", GoosePersonalityCategory.sarcastic.rawValue)) ?? .sarcastic
         disabledPhrasePacks = (defaults.stringArray(forKey: p + "disabledPhrasePacks")) ?? []
@@ -368,6 +413,9 @@ final class GooseSettings: ObservableObject {
     }
 
     func isQuietHoursActive(at date: Date = Date()) -> Bool {
+        if AudioPackManager.shared.quietHours.enabled {
+            return AudioPackManager.shared.quietHours.isActive(at: date)
+        }
         guard nighttimeQuietHours else { return false }
         let hour = Calendar.current.component(.hour, from: date)
         if quietStartHour == quietEndHour { return true }
@@ -400,6 +448,12 @@ final class GooseSettings: ObservableObject {
         }
         if stored < 4 {
             // v3 -> v4: preserve all v3 keys; v2.1 audio/meme/notepad/observation keys fall back to defaults.
+        }
+        if stored < 5 {
+            // v4 -> v5: preserve all v4 keys; randomHonkFrequency & honkCooldown fall back to defaults.
+        }
+        if stored < 6 {
+            // v5 -> v6: preserve all v5 keys; memoAlwaysOnTop falls back to true.
         }
         if stored != schemaVersion { defaults.set(schemaVersion, forKey: key) }
     }
@@ -507,6 +561,8 @@ final class GooseSettings: ObservableObject {
         soundEffects = true
         muteGoose = false
         randomHonking = true
+        randomHonkFrequency = .low
+        honkCooldown = 20.0
         soundFrequency = 1
         naughty = 0.5; aggressive = 0.5; laziness = 0.5; curious = 0.5; affectionate = 0.5
         personalityEvolution = false
@@ -549,6 +605,7 @@ final class GooseSettings: ObservableObject {
         notepadLifetime = 35.0
         preventRepeatedMessages = true
         deliveryAnimationSpeed = 1.0
+        memoAlwaysOnTop = true
         personalityCategory = .sarcastic
         disabledPhrasePacks = []
         screenObservationMode = .automaticBackground

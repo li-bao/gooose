@@ -30,6 +30,14 @@ if CommandLine.arguments.contains("--selftest-ultimate") {
     Task { @MainActor in await SelfTest.ultimate() }
     RunLoop.main.run()
 }
+if CommandLine.arguments.contains("--selftest-phase1") {
+    Task { @MainActor in await SelfTest.phase1Audit() }
+    RunLoop.main.run()
+}
+if CommandLine.arguments.contains("--selftest-phase2") {
+    Task { @MainActor in await SelfTest.phase2Features() }
+    RunLoop.main.run()
+}
 if CommandLine.arguments.contains("--selftest-multigoose") { SelfTest.startMultiGoose() }
 if CommandLine.arguments.contains("--selftest-phase4") { SelfTest.startPhase4() }
 if CommandLine.arguments.contains("--selftest-perf") { SelfTest.startPerf() }

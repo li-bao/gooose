@@ -44,6 +44,12 @@ final class SoundEffectEngine {
     private var customFilePlayers: [AVAudioPlayer] = []
     private var lastPlayedAt: [String: Date] = [:]
 
+    // Vocal (honk/quack) anti-spam cooldowns
+    private var lastGlobalVocalAt: Date = .distantPast
+    private var lastGooseVocalAt: [UUID: Date] = [:]
+    private var activeVocalBusyUntil: Date = .distantPast
+    static let majorEventMinGap: TimeInterval = 2.5
+
     private(set) var playedCount = 0
     private(set) var lastPlayedIdentifier: String?
 
@@ -97,6 +103,56 @@ final class SoundEffectEngine {
         for p in customFilePlayers {
             p.stop()
         }
+        activeVocalBusyUntil = .distantPast
+    }
+
+    func clearGooseState(for gooseID: UUID) {
+        lastGooseVocalAt.removeValue(forKey: gooseID)
+    }
+
+    func resetVocalCooldowns() {
+        lastGlobalVocalAt = .distantPast
+        lastGooseVocalAt.removeAll()
+        activeVocalBusyUntil = .distantPast
+    }
+
+    func canPlayVocal(
+        gooseID: UUID?,
+        isMajorEvent: Bool,
+        isSleeping: Bool = false,
+        now: Date = Date()
+    ) -> Bool {
+        let s = GooseSettings.shared
+        guard s.masterSoundEnabled, !s.muteGoose, !s.isQuietHoursActive() else { return false }
+        guard isAudioAllowed(category: .goose) || isAudioAllowed(category: .duck) else { return false }
+
+        if isSleeping && !isMajorEvent {
+            return false
+        }
+        if now < activeVocalBusyUntil {
+            return false
+        }
+
+        let globalCooldown = isMajorEvent ? Self.majorEventMinGap : max(5.0, s.honkCooldown)
+        if now.timeIntervalSince(lastGlobalVocalAt) < globalCooldown {
+            return false
+        }
+
+        if !isMajorEvent, let id = gooseID {
+            let perGooseCooldown = max(20.0, min(40.0, s.honkCooldown * 1.4))
+            if let last = lastGooseVocalAt[id], now.timeIntervalSince(last) < perGooseCooldown {
+                return false
+            }
+        }
+        return true
+    }
+
+    func recordVocalPlayed(gooseID: UUID?, duration: TimeInterval = 0.35, now: Date = Date()) {
+        lastGlobalVocalAt = now
+        if let id = gooseID {
+            lastGooseVocalAt[id] = now
+        }
+        activeVocalBusyUntil = now.addingTimeInterval(max(0.2, duration))
     }
 
     // MARK: - Playback API
@@ -144,7 +200,17 @@ final class SoundEffectEngine {
     func isAudioAllowed(category: SoundCategory) -> Bool {
         let s = GooseSettings.shared
         guard s.masterSoundEnabled, !s.muteGoose else { return false }
-        if s.isQuietHoursActive() { return false }
+        if s.isQuietHoursActive() {
+            let mode = AudioPackManager.shared.quietHours.mode
+            switch mode {
+            case .fullMute:
+                return false
+            case .disableHonksOnly:
+                if category == .duck || category == .goose { return false }
+            case .keepUISounds:
+                if category == .duck || category == .goose || category == .footsteps { return false }
+            }
+        }
 
         switch category {
         case .duck:      return s.duckSoundsEnabled

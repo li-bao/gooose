@@ -1,32 +1,28 @@
 import AppKit
 import SpriteKit
 
-/// Renders the goose using a skeletal rig and overlapping wide round-capped
-/// lines, mirroring the original Desktop Goose drawing strategy.
+/// Renders the goose into a crisp 2× Retina `SKSpriteNode` texture using
+/// CoreGraphics strokes in exact Desktop Goose painter's order, avoiding
+/// per-frame `SKShapeNode` open-line tessellation issues.
 @MainActor
 final class GooseArt {
+    private static let canvasSize = CGSize(width: 140, height: 140)
+    private static let retinaScale: CGFloat = 2.0
+
     let node: SKNode
     /// Footprints live in their own layer so they stay put in world space
     /// when the goose body is scaled (Settings → Goose Size).
     let marksNode = SKNode()
 
-    private var rig = GooseRig()
-    private let bodyOutline = SKShapeNode()
-    private let bodyFill = SKShapeNode()
-    private let underbody = SKShapeNode()
-    private let neckOutline = SKShapeNode()
-    private let neckFill = SKShapeNode()
-    private let head1Outline = SKShapeNode()
-    private let head1Fill = SKShapeNode()
-    private let head2Outline = SKShapeNode()
-    private let head2Fill = SKShapeNode()
-    private let beak = SKShapeNode()
-    private let leftEye = SKShapeNode()
-    private let rightEye = SKShapeNode()
     private let shadow = SKSpriteNode()
-    private let leftFoot = SKShapeNode()
-    private let rightFoot = SKShapeNode()
+    private let bodySprite = SKSpriteNode()
     private var footMarkNodes: [SKShapeNode] = []
+
+    // Pose cache to avoid redundant texture uploads when stationary
+    private var lastDirection: CGFloat = .nan
+    private var lastNeckLerp: CGFloat = .nan
+    private var lastLeftFootOffset: CGPoint = CGPoint(x: CGFloat.nan, y: CGFloat.nan)
+    private var lastRightFootOffset: CGPoint = CGPoint(x: CGFloat.nan, y: CGFloat.nan)
 
     init() {
         node = SKNode()
@@ -34,51 +30,27 @@ final class GooseArt {
         attachInRenderOrder()
     }
 
-    /// Updates the rig and redraws all body parts based on the simulation snapshot.
+    /// Updates the rig and redraws the goose sprite + footprints based on the simulation snapshot.
     func update(simulation: GooseSimulation) {
-        rig.update(
-            position: simulation.position,
-            directionDegrees: simulation.direction,
-            neckLerp: simulation.neckLerpPercent
-        )
-        redrawBody()
-        redrawFeet(simulation: simulation)
+        let pos = simulation.position
+        shadow.position = pos
+        bodySprite.position = pos
+        redrawBodyIfNeeded(simulation: simulation)
         redrawFootMarks(simulation: simulation)
-        shadow.position = simulation.position
     }
 
     private func configureNodes() {
-        configureLine(bodyOutline, color: GooseColors.outline, width: 24)
-        configureLine(bodyFill, color: GooseColors.white, width: 22)
-        configureLine(underbody, color: GooseColors.outline, width: 15)
-        configureLine(neckOutline, color: GooseColors.outline, width: 15)
-        configureLine(neckFill, color: GooseColors.white, width: 13)
-        configureLine(head1Outline, color: GooseColors.outline, width: 17)
-        configureLine(head1Fill, color: GooseColors.white, width: 15)
-        configureLine(head2Outline, color: GooseColors.outline, width: 12)
-        configureLine(head2Fill, color: GooseColors.white, width: 10)
-        configureLine(beak, color: GooseColors.orange, width: 9)
-
-        let eyePath = CGPath(ellipseIn: CGRect(x: -2, y: -2, width: 4, height: 4), transform: nil)
-        for eye in [leftEye, rightEye] {
-            eye.path = eyePath
-            eye.fillColor = GooseColors.eye
-            eye.strokeColor = .clear
-        }
-
-        let footPath = CGPath(ellipseIn: CGRect(x: -4, y: -4, width: 8, height: 8), transform: nil)
-        for foot in [leftFoot, rightFoot] {
-            foot.path = footPath
-            foot.fillColor = GooseColors.orange
-            foot.strokeColor = .clear
-        }
-
         let shadowSize = CGSize(width: 40, height: 30)
         if let image = makeHalftoneShadow(size: shadowSize) {
             shadow.texture = SKTexture(image: image)
         }
         shadow.size = shadowSize
         shadow.alpha = 0.85
+
+        bodySprite.size = Self.canvasSize
+        bodySprite.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        bodySprite.alpha = 1.0
+        bodySprite.isHidden = false
 
         footMarkNodes = (0..<64).map { _ in
             Self.makeFootMarkNode()
@@ -104,90 +76,123 @@ final class GooseArt {
         return mark
     }
 
-    private func configureLine(_ shape: SKShapeNode, color: NSColor, width: CGFloat) {
-        shape.strokeColor = color
-        shape.lineWidth = width
-        shape.lineCap = .round
-        shape.fillColor = .clear
-        shape.isAntialiased = true
-    }
-
     private func attachInRenderOrder() {
-        var z: CGFloat = 0
         for mark in footMarkNodes {
-            mark.zPosition = z
+            mark.zPosition = 0
             marksNode.addChild(mark)
         }
-        z += 1
-        let layers: [SKNode] = [
-            leftFoot,
-            rightFoot,
-            shadow,
-            bodyOutline,
-            neckOutline,
-            head1Outline,
-            head2Outline,
-            underbody,
-            bodyFill,
-            neckFill,
-            head1Fill,
-            head2Fill,
-            beak,
-            leftEye,
-            rightEye,
-        ]
-        for (index, layer) in layers.enumerated() {
-            layer.zPosition = z + CGFloat(index)
-            node.addChild(layer)
+        shadow.zPosition = 1
+        bodySprite.zPosition = 2
+        node.addChild(shadow)
+        node.addChild(bodySprite)
+    }
+
+    private func redrawBodyIfNeeded(simulation: GooseSimulation) {
+        let dir = simulation.direction
+        let neck = simulation.neckLerpPercent
+        let lOffset = simulation.lFootPos - simulation.position
+        let rOffset = simulation.rFootPos - simulation.position
+
+        if bodySprite.texture != nil,
+           abs(dir - lastDirection) < 0.05,
+           abs(neck - lastNeckLerp) < 0.005,
+           abs(lOffset.x - lastLeftFootOffset.x) < 0.1,
+           abs(lOffset.y - lastLeftFootOffset.y) < 0.1,
+           abs(rOffset.x - lastRightFootOffset.x) < 0.1,
+           abs(rOffset.y - lastRightFootOffset.y) < 0.1 {
+            return
+        }
+
+        lastDirection = dir
+        lastNeckLerp = neck
+        lastLeftFootOffset = lOffset
+        lastRightFootOffset = rOffset
+
+        if let cgImage = renderGooseCGImage(directionDegrees: dir, neckLerp: neck, leftFootOffset: lOffset, rightFootOffset: rOffset) {
+            bodySprite.texture = SKTexture(cgImage: cgImage)
         }
     }
 
-    private func redrawBody() {
+    private func renderGooseCGImage(
+        directionDegrees: CGFloat,
+        neckLerp: CGFloat,
+        leftFootOffset: CGPoint,
+        rightFootOffset: CGPoint
+    ) -> CGImage? {
+        let pixelW = Int(Self.canvasSize.width * Self.retinaScale)
+        let pixelH = Int(Self.canvasSize.height * Self.retinaScale)
+        guard let ctx = CGContext(
+            data: nil,
+            width: pixelW,
+            height: pixelH,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelW * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        ctx.clear(CGRect(x: 0, y: 0, width: pixelW, height: pixelH))
+        ctx.scaleBy(x: Self.retinaScale, y: Self.retinaScale)
+        ctx.translateBy(x: Self.canvasSize.width * 0.5, y: Self.canvasSize.height * 0.5)
+        ctx.setAllowsAntialiasing(true)
+        ctx.setShouldAntialias(true)
+        ctx.setLineCap(.round)
+
+        var rig = GooseRig()
+        rig.update(position: .zero2, directionDegrees: directionDegrees, neckLerp: neckLerp)
+
+        // 1. Feet
+        ctx.setFillColor(GooseColors.orange.cgColor)
+        for center in [leftFootOffset, rightFootOffset] {
+            ctx.fillEllipse(in: CGRect(x: center.x - 4, y: center.y - 4, width: 8, height: 8))
+        }
+
+        // 2. Outlines
         let fwd = rig.forward
-
-        let bodyStart = rig.bodyCenter + fwd * 11
-        let bodyEnd = rig.bodyCenter - fwd * 11
-        let bodyPath = lineSegment(from: bodyStart, to: bodyEnd)
-        bodyOutline.path = bodyPath
-        bodyFill.path = bodyPath
-
-        let underStart = rig.underbodyCenter + fwd * 7
-        let underEnd = rig.underbodyCenter - fwd * 7
-        underbody.path = lineSegment(from: underStart, to: underEnd)
-
-        let neckPath = lineSegment(from: rig.neckBase, to: rig.neckHeadPoint)
-        neckOutline.path = neckPath
-        neckFill.path = neckPath
-
-        let head1Path = lineSegment(from: rig.neckHeadPoint, to: rig.head1EndPoint)
-        head1Outline.path = head1Path
-        head1Fill.path = head1Path
-
-        let head2Path = lineSegment(from: rig.head1EndPoint, to: rig.head2EndPoint)
-        head2Outline.path = head2Path
-        head2Fill.path = head2Path
-
+        let bodyA = rig.bodyCenter + fwd * 11
+        let bodyB = rig.bodyCenter - fwd * 11
+        let underA = rig.underbodyCenter + fwd * 7
+        let underB = rig.underbodyCenter - fwd * 7
         let beakEnd = rig.head2EndPoint + fwd * 3
-        beak.path = lineSegment(from: rig.head2EndPoint, to: beakEnd)
 
+        strokeLine(ctx, from: bodyA, to: bodyB, color: GooseColors.outline, width: 24)
+        strokeLine(ctx, from: rig.neckBase, to: rig.neckHeadPoint, color: GooseColors.outline, width: 15)
+        strokeLine(ctx, from: rig.neckHeadPoint, to: rig.head1EndPoint, color: GooseColors.outline, width: 17)
+        strokeLine(ctx, from: rig.head1EndPoint, to: rig.head2EndPoint, color: GooseColors.outline, width: 12)
+        strokeLine(ctx, from: underA, to: underB, color: GooseColors.outline, width: 15)
+
+        // 3. White fills + orange beak
+        strokeLine(ctx, from: bodyA, to: bodyB, color: GooseColors.white, width: 22)
+        strokeLine(ctx, from: rig.neckBase, to: rig.neckHeadPoint, color: GooseColors.white, width: 13)
+        strokeLine(ctx, from: rig.neckHeadPoint, to: rig.head1EndPoint, color: GooseColors.white, width: 15)
+        strokeLine(ctx, from: rig.head1EndPoint, to: rig.head2EndPoint, color: GooseColors.white, width: 10)
+        strokeLine(ctx, from: rig.head2EndPoint, to: beakEnd, color: GooseColors.orange, width: 9)
+
+        // 4. Eyes
         let perp = rig.perpendicular
         let stretch = CGPoint(x: 1.3, y: 0.4)
         let baseX = rig.neckHeadPoint.x + fwd.x * 5
         let baseY = rig.neckHeadPoint.y + 3 + fwd.y * 5
+        let leftEyeCenter = CGPoint(x: baseX - perp.x * stretch.x * 5, y: baseY - perp.y * stretch.y * 5)
+        let rightEyeCenter = CGPoint(x: baseX + perp.x * stretch.x * 5, y: baseY + perp.y * stretch.y * 5)
 
-        leftEye.position = CGPoint(
-            x: baseX - perp.x * stretch.x * 5,
-            y: baseY - perp.y * stretch.y * 5
-        )
-        rightEye.position = CGPoint(
-            x: baseX + perp.x * stretch.x * 5,
-            y: baseY + perp.y * stretch.y * 5
-        )
+        ctx.setFillColor(GooseColors.eye.cgColor)
+        for center in [leftEyeCenter, rightEyeCenter] {
+            ctx.fillEllipse(in: CGRect(x: center.x - 2, y: center.y - 2, width: 4, height: 4))
+        }
+
+        return ctx.makeImage()
     }
 
-    private func redrawFeet(simulation: GooseSimulation) {
-        leftFoot.position = simulation.lFootPos
-        rightFoot.position = simulation.rFootPos
+    private func strokeLine(_ ctx: CGContext, from a: CGPoint, to b: CGPoint, color: NSColor, width: CGFloat) {
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(width)
+        ctx.beginPath()
+        ctx.move(to: a)
+        ctx.addLine(to: b)
+        ctx.strokePath()
     }
 
     private func redrawFootMarks(simulation: GooseSimulation) {
@@ -240,13 +245,6 @@ final class GooseArt {
             node.yScale = mark.isRight ? -1 : 1
             node.alpha = alpha
         }
-    }
-
-    private func lineSegment(from a: CGPoint, to b: CGPoint) -> CGPath {
-        let path = CGMutablePath()
-        path.move(to: a)
-        path.addLine(to: b)
-        return path
     }
 
     private func makeHalftoneShadow(size: CGSize) -> NSImage? {

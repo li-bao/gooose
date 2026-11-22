@@ -13,7 +13,7 @@ final class HeadphonesNode: SKNode {
 
     override init() {
         super.init()
-        zPosition = 12
+        zPosition = 16
         alpha = 0
         isHidden = true
         buildBand()

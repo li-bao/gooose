@@ -97,7 +97,7 @@ final class UserContentManager: ObservableObject {
     static let maxAudioBytes: Int64 = 25 * 1024 * 1024
     static let maxTextBytes: Int64 = 1 * 1024 * 1024
 
-    static let supportedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif"]
+    static let supportedImageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp"]
     static let supportedAudioExtensions: Set<String> = ["wav", "mp3", "m4a", "aiff", "caf"]
 
     let rootURL: URL
@@ -233,7 +233,8 @@ final class UserContentManager: ObservableObject {
         ctx.setFillColor(NSColor(calibratedRed: 0.95, green: 0.55, blue: 0.12, alpha: 1).cgColor)
         ctx.fill(CGRect(x: 20, y: 20, width: w - 40, height: 14))
 
-        let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
+        guard let cgImage = ctx.makeImage() else { return }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
         rep.size = NSSize(width: w, height: h)
         NSGraphicsContext.saveGraphicsState()
         if let gCtx = NSGraphicsContext(bitmapImageRep: rep) {
@@ -455,6 +456,7 @@ final class UserContentManager: ObservableObject {
         let dest = memesURL.appendingPathComponent(finalName)
         guard dest != item.url else { return }
         try FileManager.default.moveItem(at: item.url, to: dest)
+        recentMemeIDs.removeAll { $0 == item.id }
         reloadAll()
     }
 
@@ -659,7 +661,9 @@ final class UserContentManager: ObservableObject {
     private func scheduleReload() {
         reloadWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            self?.reloadAll()
+            Task { @MainActor [weak self] in
+                self?.reloadAll()
+            }
         }
         reloadWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: item)

@@ -10,6 +10,7 @@ enum HonkEvent: Sendable {
     case peek
     case prank
     case pat
+    case delivery
 }
 
 /// Event-driven audio facade that plays user-provided audio when available and
@@ -32,58 +33,103 @@ final class AudioPlayer {
         didLoadAnything = true // Synthesized engine is always available locally
     }
 
-    /// Plays an event-tailored sound effect matching the goose/duck's mood.
-    func playEvent(_ event: HonkEvent) {
-        let s = GooseSettings.shared
-        guard s.masterSoundEnabled, !s.muteGoose else { return }
+    func stopAll() {
+        for p in honks { p.stop() }
+        for p in pats { p.stop() }
+        bite?.stop()
+        AudioPackManager.shared.stopAll()
+        SoundEffectEngine.shared.stopAll()
+    }
 
-        switch event {
-        case .pat:
-            if !pats.isEmpty && s.soundEffects {
+    /// Plays an event-tailored sound effect matching the goose/duck's mood.
+    func playEvent(_ event: HonkEvent, gooseID: UUID? = nil, isSleeping: Bool = false) {
+        let s = GooseSettings.shared
+        let ctrl = GooseController.shared
+        guard s.masterSoundEnabled, !s.muteGoose, !s.isQuietHoursActive(),
+              ctrl.state != .paused, ctrl.state != .hidden else { return }
+
+        if event == .pat {
+            guard s.soundEffects else { return }
+            if !pats.isEmpty {
                 playPat()
             } else {
-                _ = SoundEffectEngine.shared.playDuck(.happyQuack, priority: .normal)
+                _ = SoundEffectEngine.shared.playDuck(.happyQuack, priority: .low, cooldown: 1.2)
             }
+            return
+        }
+
+        let isMajor: Bool
+        switch event {
+        case .theft, .rage, .sleepWake, .delivery:
+            isMajor = true
+        default:
+            isMajor = false
+        }
+
+        guard SoundEffectEngine.shared.canPlayVocal(gooseID: gooseID, isMajorEvent: isMajor, isSleeping: isSleeping) else {
+            return
+        }
+
+        var played = false
+        switch event {
+        case .pat:
+            break
         case .random:
-            if s.duckSoundsEnabled && (!s.gooseSoundsEnabled || Bool.random()) {
-                let duckPicks: [DuckSound] = [.shortQuack, .longQuack, .happyQuack, .quietMutter, .repeatedQuacking]
-                _ = SoundEffectEngine.shared.playDuck(duckPicks.randomElement() ?? .shortQuack, priority: .normal)
+            if AudioPackManager.shared.playEventSound(.gooseHonk) {
+                played = true
+            } else if s.duckSoundsEnabled && (!s.gooseSoundsEnabled || Bool.random()) {
+                let duckPicks: [DuckSound] = [.shortQuack, .quietMutter, .happyQuack]
+                played = SoundEffectEngine.shared.playDuck(duckPicks.randomElement() ?? .shortQuack, priority: .low, cooldown: 1.0)
             } else {
-                playHonk(volume: 0.75, rate: Float.random(in: 0.95...1.05))
+                played = playHonk(volume: 0.72, rate: Float.random(in: 0.95...1.05))
             }
         case .appSwitch:
-            if s.duckSoundsEnabled && Bool.random() {
-                _ = SoundEffectEngine.shared.playDuck(.surprisedQuack, priority: .normal)
+            if AudioPackManager.shared.playEventSound(.interaction) {
+                played = true
+            } else if s.duckSoundsEnabled && Bool.random() {
+                played = SoundEffectEngine.shared.playDuck(.surprisedQuack, priority: .normal, cooldown: 1.0)
             } else {
-                playHonk(volume: 0.65, rate: 1.08)
+                played = playHonk(volume: 0.65, rate: 1.08)
             }
         case .theft:
-            if !SoundEffectEngine.shared.playGoose(.excitedHonk, priority: .high) {
-                _ = SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
-            }
+            played = AudioPackManager.shared.playEventSound(.gooseAngry)
+                || SoundEffectEngine.shared.playGoose(.excitedHonk, priority: .high)
+                || SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
         case .rage, .sleepWake:
-            if !SoundEffectEngine.shared.playGoose(.aggressiveHonk, priority: .high) {
-                _ = SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
-            }
+            played = AudioPackManager.shared.playEventSound(.gooseAngry)
+                || SoundEffectEngine.shared.playGoose(.aggressiveHonk, priority: .high)
+                || SoundEffectEngine.shared.playDuck(.angryQuack, priority: .high)
         case .peek:
-            _ = SoundEffectEngine.shared.playDuck(.quietMutter, priority: .low)
-        case .prank:
-            if Bool.random() {
-                _ = SoundEffectEngine.shared.playGoose(.warningHonk, priority: .normal)
+            played = AudioPackManager.shared.playEventSound(.gooseLaugh)
+                || SoundEffectEngine.shared.playDuck(.quietMutter, priority: .low, cooldown: 1.0)
+        case .prank, .delivery:
+            if AudioPackManager.shared.playEventSound(.gooseHonk) {
+                played = true
+            } else if s.gooseSoundsEnabled && s.allows(.honking) && (!s.duckSoundsEnabled || Bool.random()) {
+                played = SoundEffectEngine.shared.playGoose(.warningHonk, priority: .normal)
             } else {
-                _ = SoundEffectEngine.shared.playDuck(.shortQuack, priority: .normal)
+                played = SoundEffectEngine.shared.playDuck(.shortQuack, priority: .normal)
             }
+        }
+
+        if played {
+            SoundEffectEngine.shared.recordVocalPlayed(gooseID: gooseID, duration: 0.35)
         }
     }
 
-    func playHonk(volume: Float = 0.8, rate: Float = 1.0) {
+    @discardableResult
+    func playHonk(volume: Float = 0.8, rate: Float = 1.0) -> Bool {
         let s = GooseSettings.shared
-        guard s.masterSoundEnabled, !s.muteGoose, s.gooseSoundsEnabled, s.allows(.honking) else { return }
+        guard s.masterSoundEnabled, !s.muteGoose, !s.isQuietHoursActive(),
+              s.gooseSoundsEnabled, s.allows(.honking) else { return false }
         if !honks.isEmpty {
             let level = Float(s.masterVolume * s.honkVolume) * (volume / 0.8)
             playRandom(from: honks, volume: min(1, level), rate: rate)
-        } else if !SoundEffectEngine.shared.playCustomUserSoundIfAvailable(category: .goose) {
-            _ = SoundEffectEngine.shared.playGoose(.classicHonk, priority: .normal)
+            return true
+        } else if SoundEffectEngine.shared.playCustomUserSoundIfAvailable(category: .goose) {
+            return true
+        } else {
+            return SoundEffectEngine.shared.playGoose(.classicHonk, priority: .normal)
         }
     }
 

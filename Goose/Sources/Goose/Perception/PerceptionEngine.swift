@@ -151,12 +151,6 @@ final class PerceptionEngine {
         let topK = pickTopK(fragments: fragments)
         let idle = currentIdleSeconds()
 
-        if let previous = buffer.last,
-           previous.textHash == textHash,
-           previous.frontmostAppName == appName {
-            return previous
-        }
-
         let prevApp = lastSeenAppName
         if appName != lastSeenAppName {
             elapsedOnCurrentApp = 0
@@ -166,6 +160,22 @@ final class PerceptionEngine {
         lastSeenAppName = appName
         lastFrontmostAppName = appName
         lastSnapshotTime = now
+
+        if let previous = buffer.last,
+           previous.textHash == textHash,
+           previous.frontmostAppName == appName {
+            return ContextSnapshot(
+                timestamp: now,
+                frontmostAppName: appName,
+                frontmostWindowTitle: windowTitle ?? previous.frontmostWindowTitle,
+                ocrText: previous.ocrText,
+                ocrTopK: previous.ocrTopK,
+                elapsedOnApp: elapsedOnCurrentApp,
+                prevFrontmostAppName: prevApp,
+                idleSeconds: idle,
+                textHash: textHash
+            )
+        }
 
         let snapshot = ContextSnapshot(
             timestamp: now,

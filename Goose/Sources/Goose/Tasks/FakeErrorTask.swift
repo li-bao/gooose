@@ -8,6 +8,7 @@ final class FakeErrorTask: GooseTask {
     private weak var effects: GooseSceneEffects?
     private weak var personality: GoosePersonality?
     private var triggered = false
+    private var generationTask: Task<Void, Never>?
 
     init(effects: GooseSceneEffects? = nil, personality: GoosePersonality? = nil) {
         self.effects = effects
@@ -29,15 +30,22 @@ final class FakeErrorTask: GooseTask {
         triggered = true
         GooseStats.shared.recordPrank("Fake \(style.rawValue) alert", kind: .window)
 
-        Task { @MainActor [weak simulation] in
+        generationTask?.cancel()
+        generationTask = Task { @MainActor [weak self, weak simulation] in
             let text = await GooseController.shared.llm.generateFakeErrorMessage(personality: pers, style: style)
+            guard let self, !Task.isCancelled, let simulation, simulation.currentTask === self else { return }
             guard GooseSettings.shared.allows(.fakeErrors), GooseController.shared.allowsProactive else {
-                simulation?.setTask(WanderTask())
+                simulation.setTask(WanderTask())
                 return
             }
             eff?.showFakeError(style: style, customText: text)
-            simulation?.setTask(WanderTask())
+            simulation.setTask(WanderTask())
         }
+    }
+
+    func stop(simulation: GooseSimulation) {
+        generationTask?.cancel()
+        generationTask = nil
     }
 
     func tick(simulation: GooseSimulation) {

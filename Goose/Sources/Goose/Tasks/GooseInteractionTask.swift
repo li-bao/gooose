@@ -5,7 +5,12 @@ enum SocialInteractionKind: String, CaseIterable, Sendable {
     case chasePeer
     case avoidPeer
     case walkTogether
+    case greetPeer
     case argue
+    case playTogether
+    case sleepTogether
+    case stealMeme
+    case shareMemo
     case tugNote
     case spectateHolder
     case flockGather
@@ -15,9 +20,14 @@ enum SocialInteractionKind: String, CaseIterable, Sendable {
         case .chasePeer:      return "Chasing another goose"
         case .avoidPeer:      return "Dodging another goose"
         case .walkTogether:   return "Walking together"
-        case .argue:          return "Arguing with another goose"
+        case .greetPeer:      return "Greeting another goose"
+        case .argue:          return "Fighting over turf"
+        case .playTogether:   return "Playing with another goose"
+        case .sleepTogether:  return "Sleeping together"
+        case .stealMeme:      return "Stealing a meme"
+        case .shareMemo:      return "Sharing a memo"
         case .tugNote:        return "Fighting over a note"
-        case .spectateHolder: return "Spectating cursor theft"
+        case .spectateHolder: return "Watching another goose"
         case .flockGather:    return "Flock gathering"
         }
     }
@@ -54,13 +64,15 @@ final class GooseInteractionTask: GooseTask {
         nextChatterTime = GameTime.time + 1.2
 
         switch kind {
-        case .chasePeer, .avoidPeer, .spectateHolder:
+        case .chasePeer, .avoidPeer, .spectateHolder, .playTogether, .stealMeme:
             simulation.setSpeed(.run)
-        case .walkTogether, .flockGather:
+        case .walkTogether, .flockGather, .greetPeer, .shareMemo:
             simulation.setSpeed(.walk)
             if GooseSettings.shared.allows(.footprints) {
                 simulation.trackMudEndTime = max(simulation.trackMudEndTime, GameTime.time + duration)
             }
+        case .sleepTogether:
+            simulation.setSpeed(.walk)
         case .argue, .tugNote:
             simulation.setSpeed(.walk)
             simulation.overrideExtendNeck = true
@@ -86,7 +98,7 @@ final class GooseInteractionTask: GooseTask {
 
             let partnerPos = partner.simulation.position
             switch kind {
-            case .chasePeer:
+            case .chasePeer, .playTogether, .stealMeme:
                 simulation.targetPos = partnerPos
 
             case .avoidPeer:
@@ -96,9 +108,35 @@ final class GooseInteractionTask: GooseTask {
                 simulation.targetPos = clamp(target, to: simulation.screenSize)
 
             case .walkTogether:
-                // Match target roughly beside partner while leaving footprints together.
                 let side = CGPoint(x: partner.simulation.targetPos.x + 48, y: partner.simulation.targetPos.y + 18)
                 simulation.targetPos = clamp(side, to: simulation.screenSize)
+
+            case .greetPeer, .shareMemo:
+                let dist = CGPoint.distance(simulation.position, partnerPos)
+                if dist > 68 {
+                    simulation.targetPos = partnerPos
+                } else {
+                    simulation.velocity = .zero2
+                    simulation.targetPos = simulation.position
+                    let toPartner = partnerPos - simulation.position
+                    if toPartner != .zero2 {
+                        simulation.direction = atan2(toPartner.y, toPartner.x) * SamMath.rad2Deg
+                    }
+                    if GameTime.time >= nextChatterTime {
+                        nextChatterTime = GameTime.time + 3.0
+                        effects?.spawnHearts(at: simulation.beakPosition, count: 1)
+                        effects?.showTaunt(kind == .shareMemo ? "check this memo!" : "honk! 👋", at: simulation.beakPosition)
+                    }
+                }
+
+            case .sleepTogether:
+                let spot = CGPoint(x: partnerPos.x + 42, y: partnerPos.y)
+                if CGPoint.distance(simulation.position, spot) > 22 {
+                    simulation.targetPos = clamp(spot, to: simulation.screenSize)
+                } else {
+                    simulation.velocity = .zero2
+                    simulation.targetPos = simulation.position
+                }
 
             case .argue, .tugNote:
                 simulation.overrideExtendNeck = true
@@ -113,7 +151,7 @@ final class GooseInteractionTask: GooseTask {
                     }
                     simulation.targetPos = simulation.position
                     if GameTime.time >= nextChatterTime {
-                        nextChatterTime = GameTime.time + 2.0
+                        nextChatterTime = GameTime.time + 2.5
                         effects?.playSoundEvent(.peek)
                         let line = kind == .tugNote ? "mine! honk!" : "honk?! no, honk!"
                         effects?.showTaunt(line, at: simulation.beakPosition)
@@ -121,7 +159,6 @@ final class GooseInteractionTask: GooseTask {
                 }
 
             case .spectateHolder:
-                // Follow behind the lock holder at a polite 65px offset without touching the cursor.
                 let behind = partnerPos + CGPoint(x: -55, y: -35)
                 simulation.targetPos = clamp(behind, to: simulation.screenSize)
 

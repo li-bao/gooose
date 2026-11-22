@@ -93,8 +93,6 @@ final class GooseSimulation {
     }
 
     func tick() {
-        GameTime.tick()
-
         targetDirection = CGPoint.normalize(targetPos - position)
         overrideExtendNeck = false
         currentTask?.tick(simulation: self)
@@ -102,20 +100,19 @@ final class GooseSimulation {
         let smoothed = CGPoint.lerp(.fromAngleDegrees(direction), targetDirection, 0.25)
         direction = atan2(smoothed.y, smoothed.x) * SamMath.rad2Deg
 
-        if CGPoint.magnitude(velocity) > currentSpeed {
-            velocity = CGPoint.normalize(velocity) * currentSpeed
-        }
-        // Deadband: when the goose is essentially at its target, stop pushing
-        // velocity toward it. Without this, stationary tasks (pause, nap,
-        // deep sleep) leave a non-zero `targetPos - position` vector and the
-        // engine micro-jitters the goose forever toward an unreachable point.
+        // Deadband: snap cleanly when within a single frame's step to prevent micro-jitter.
         let toTarget = targetPos - position
-        if CGPoint.magnitude(toTarget) > 1 {
+        let dist = CGPoint.magnitude(toTarget)
+        let snapThreshold = max(1.5, currentSpeed * GameTime.deltaTime)
+        if dist > snapThreshold {
             velocity += CGPoint.normalize(toTarget) * currentAcceleration * GameTime.deltaTime
+            if CGPoint.magnitude(velocity) > currentSpeed {
+                velocity = CGPoint.normalize(velocity) * currentSpeed
+            }
+            position += velocity * GameTime.deltaTime
         } else {
             velocity = .zero2
         }
-        position += velocity * GameTime.deltaTime
 
         solveFeet()
 
@@ -158,9 +155,9 @@ final class GooseSimulation {
             return
         }
 
-        if lFootMoveTimeStart > 0 {
+        if lFootMoveTimeStart >= 0 {
             advanceFootStep(left: true, home: lHome)
-        } else if rFootMoveTimeStart > 0 {
+        } else if rFootMoveTimeStart >= 0 {
             advanceFootStep(left: false, home: rHome)
         }
     }
@@ -226,8 +223,9 @@ final class GooseSimulation {
         if target > footMarks.count {
             footMarks.append(contentsOf: repeatElement(FootMark(), count: target - footMarks.count))
         } else {
-            footMarks = Array(footMarks.suffix(target))
-            footMarkIndex = footMarkIndex % target
+            let ordered = (0..<footMarks.count).map { footMarks[(footMarkIndex + $0) % footMarks.count] }
+            footMarks = Array(ordered.suffix(target))
+            footMarkIndex = 0
         }
     }
 
