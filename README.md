@@ -1,4 +1,4 @@
-# Super Goose Desktop
+# Gooose desktop
 
 A native macOS desktop pet and prank engine written in **Swift 6.2**, **AppKit**, **SwiftUI**, and **SpriteKit** for **Apple Silicon (`arm64`)**. Inspired by Sam Chiet's *Desktop Goose*, Super Goose Desktop combines multi-goose simulation, smooth edge-dragged notes and memes, procedural sound synthesis, a full customization studio, and a macOS TCC Permission Center.
 
@@ -29,7 +29,7 @@ A native macOS desktop pet and prank engine written in **Swift 6.2**, **AppKit**
 
 ## 1. Project Overview
 
-Super Goose Desktop runs as a lightweight macOS menu bar accessory (`🪿`) with a transparent, click-through `SpriteKit` overlay spanning your connected displays. Geese wander across your screen, leave directional webbed footprints, chase or grab your cursor, drag editable sarcastic notes and custom memes onto the desktop from off-screen edges, and react to your active workspace with configurable pranks and personalities.
+Gooose Desktop runs as a lightweight macOS menu bar accessory (`🪿`) with a transparent, click-through `SpriteKit` overlay spanning your connected displays. Geese wander across your screen, leave directional webbed footprints, chase or grab your cursor, drag editable sarcastic notes and custom memes onto the desktop from off-screen edges, and react to your active workspace with configurable pranks and personalities.
 
 ## 2. Highlights
 
