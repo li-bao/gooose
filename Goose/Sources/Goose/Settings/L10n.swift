@@ -131,7 +131,7 @@ enum L10n {
         "No geese": "沒有鵝", "Status": "狀態",
         // Menu bar
         "Open Control Center": "開啟控制中心", "Open Settings…": "開啟設定…", "Pause": "暫停", "Resume": "繼續",
-        "Hide Goose": "隱藏鵝", "Show Goose": "顯示鵝", "Quit": "結束", "Quit Super Goose Desktop": "結束 Super Goose Desktop",
+        "Hide Goose": "隱藏鵝", "Show Goose": "顯示鵝", "Quit": "結束", "Quit Gooose": "結束 Gooose",
         // Phase 2 Behaviors & Tunables
         "Goose pushes active windows, peeks beside them, drags photos and opens web pages.": "鵝會推動視窗、在視窗旁探頭、拖放照片並開啟網頁。",
         "Directional webbed footprints left behind as the goose walks.": "鵝走動時留下有方向感的蹼足腳印。",

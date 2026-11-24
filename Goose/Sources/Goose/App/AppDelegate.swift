@@ -140,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenu
         permItem.target = self
         appMenu.addItem(permItem)
         appMenu.addItem(.separator())
-        let quitItem = NSMenuItem(title: L("Quit Super Goose Desktop"), action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L("Quit Gooose"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         appMenu.addItem(quitItem)
         appItem.submenu = appMenu

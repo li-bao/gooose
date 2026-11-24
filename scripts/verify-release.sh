@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-DMG_PATH="$DIST_DIR/Super-Goose-Desktop-Apple-Silicon.dmg"
+DMG_PATH="$DIST_DIR/Gooose-macOS-arm64.dmg"
 MNT_DIR="$(mktemp -d /tmp/super-goose-mount.XXXXXX)"
 
 cleanup() {
@@ -21,7 +21,7 @@ fi
 
 hdiutil attach -nobrowse -mountpoint "$MNT_DIR" "$DMG_PATH"
 
-MOUNTED_APP="$MNT_DIR/Super Goose Desktop.app"
+MOUNTED_APP="$MNT_DIR/Gooose.app"
 MOUNTED_BIN="$MOUNTED_APP/Contents/MacOS/Goose"
 
 file "$MOUNTED_BIN"

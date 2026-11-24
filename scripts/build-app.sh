@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_DIR="$ROOT_DIR/Goose"
 DIST_DIR="$ROOT_DIR/dist"
-APP_BUNDLE="$DIST_DIR/Super Goose Desktop.app"
+APP_BUNDLE="$DIST_DIR/Gooose.app"
 VERSION="${VERSION:-2.2.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-5}"
 SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
@@ -28,7 +28,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/Sprites"
 
 cp "$REL_BIN" "$APP_BUNDLE/Contents/MacOS/Goose"
 chmod +x "$APP_BUNDLE/Contents/MacOS/Goose"
-ln -sf "Goose" "$APP_BUNDLE/Contents/MacOS/Super Goose Desktop"
+ln -sf "Goose" "$APP_BUNDLE/Contents/MacOS/Gooose"
 
 if [[ -d "$REL_BUNDLE" ]]; then
   cp -R "$REL_BUNDLE" "$APP_BUNDLE/Contents/Resources/Goose_Goose.bundle"
@@ -58,9 +58,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Super Goose Desktop</string>
+    <string>Gooose</string>
     <key>CFBundleDisplayName</key>
-    <string>Super Goose Desktop</string>
+    <string>Gooose</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
